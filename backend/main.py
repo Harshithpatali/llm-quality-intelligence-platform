@@ -155,6 +155,24 @@ class OperationalAnnotationRequest(BaseModel):
     escalated: bool = False
     is_audit: bool = False
 
+@app.get("/ops/products")
+def products(
+    q: str | None = None,
+    brand: str | None = None,
+    product_type: str | None = None,
+    domain_name: str | None = None,
+    limit: int = 50,
+):
+    try:
+        return db.list_product_metadata(q, brand, product_type, domain_name, limit)
+    except Exception as exc:
+        logger.exception("Could not list catalog product metadata")
+        raise HTTPException(
+            status_code=503,
+            detail="Could not list catalog product metadata. Verify the API Supabase project, key, and catalog schema.",
+        ) from exc
+
+
 @app.get("/ops/tasks")
 def operational_tasks(category: str | None = None):
     try:
