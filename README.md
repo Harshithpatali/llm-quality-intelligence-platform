@@ -147,3 +147,8 @@ The flagship workflow is a human-in-the-loop annotation operations demo, not an 
 4. Open **Annotation operations**, review the demonstration SOP, and annotate tasks. Use distinct annotator IDs only when distinct people actually perform the reviews.
 
 The annotation task set is synthetic and is not Amazon data or an Amazon SOP. Separately, the project stores 7,908 records from the user-supplied `final_clean_amazon.jsonl` item-list metadata file as catalog grounding data. This is product/catalog metadata, not Amazon internal customer or support data. Reference behavior is separated into an explicit calibration view so live annotation is not pre-labeled. The reference behavior must not be represented as independently validated ground truth. The dashboard reports descriptive metrics; it does not infer quality improvements or claim statistical significance. Annotations preserve the SOP ID used at submission. The audit log records submission events; it is not a tamper-proof compliance ledger.
+
+
+### Multi-model evaluation
+
+The default evaluation configuration runs three model calls when both providers are selected: the configured Groq model plus two OpenRouter models (`openai/gpt-oss-120b` and `deepseek/deepseek-v4-flash-0731`). OpenRouter model slugs should be kept in a comma-separated `OPENROUTER_MODELS` environment variable.
