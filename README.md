@@ -1,6 +1,6 @@
 # LLM Quality Intelligence Platform
 
-A reproducible workbench for evaluating LLM response quality across Groq and OpenRouter models. Includes a curated synthetic benchmark, provider adapters, FastAPI service, Streamlit dashboard, transparent heuristic evaluation, human review, CSV exports, and tests.
+A reproducible workbench for evaluating LLM response quality across Groq and OpenRouter models. Includes a curated synthetic benchmark, provider adapters, FastAPI service, Streamlit dashboard, transparent heuristic evaluation, human review, CSV exports, and Supabase PostgreSQL persistence.
 
 > Dataset note: `data/benchmark.jsonl` contains 60 purpose-built synthetic examples for engineering and demonstration. It is not real customer data or an externally validated gold standard.
 
@@ -48,7 +48,7 @@ Open Streamlit at http://localhost:8501 and API docs at http://localhost:8000/do
 - `OPENROUTER_API_KEY`: required to call OpenRouter.
 - `GROQ_MODEL`: defaults to `llama-3.3-70b-versatile`; change if unavailable.
 - `OPENROUTER_MODELS`: comma-separated model slugs; defaults are examples. Verify availability in the OpenRouter catalog.
-- `DATABASE_PATH`: defaults to `data/platform.db`.
+- `SUPABASE_URL`: Supabase project URL.- `SUPABASE_KEY`: Supabase publishable/anon key for the configured access model. Do not use a service-role key in client-facing code.
 
 Groq and OpenRouter expose chat-completion APIs. This project uses direct HTTP calls. See [Groq API docs](https://console.groq.com/docs/api-reference) and [OpenRouter quickstart](https://openrouter.ai/docs/quickstart).
 
@@ -77,7 +77,7 @@ The heuristic is not semantic evaluation and can reward keyword overlap while mi
 
 ## Repository layout
 ```
-backend/       FastAPI, providers, evaluator, persistence, benchmark runner
+backend/       FastAPI, providers, evaluator, Supabase persistence, benchmark runner
 frontend/      Streamlit dashboard and human review
 data/          synthetic benchmark JSONL
 tests/         offline tests
