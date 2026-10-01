@@ -8,8 +8,10 @@ def csv_env(name: str, default: str = "") -> list[str]:
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-OPENROUTER_MODELS = csv_env("OPENROUTER_MODELS", "meta-llama/llama-3.3-70b-instruct,google/gemini-2.0-flash-001")
+# Groq retired llama-3.3-70b-versatile on 2026-08-16.
+# GPT-OSS 120B is the current replacement model used by this project.
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+OPENROUTER_MODELS = csv_env("OPENROUTER_MODELS", "openai/gpt-oss-120b")
 JUDGE_PROVIDER = os.getenv("JUDGE_PROVIDER", "")
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "")
 DATABASE_PATH = os.getenv("DATABASE_PATH", "data/platform.db")
