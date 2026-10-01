@@ -74,7 +74,7 @@ def build_product_context(product: dict[str, Any]) -> str:
     if bullets:
         lines.append("Bullet points:")
         lines.extend(f"- {bullet}" for bullet in bullets)
-    return "\\n".join(lines)
+    return "\n".join(lines)
 
 
 def build_catalog_prompt(user_query: str, product: dict[str, Any]) -> str:
@@ -211,26 +211,26 @@ def judge_response(
 ) -> dict[str, Any]:
     provider, model = _judge_configuration()
     rubric_json = json.dumps(rubric, ensure_ascii=False, indent=2)
+    dimension_shape = {
+        name: {"score": 0, "rationale": "..."}
+        for name in rubric.get("dimensions", {})
+    }
+    response_shape = {
+        "critical_failure": false,
+        "dimensions": dimension_shape,
+        "evidence": ["..."],
+        "unsupported_claims": ["..."],
+        "recommended_action": "...",
+    }
+    response_shape_json = json.dumps(response_shape, ensure_ascii=False, indent=2)
+
     prompt = f"""You are a strict quality evaluator for product-support AI responses.
 
 Evaluate the MODEL RESPONSE against the USER QUESTION and PRODUCT CATALOG using the RUBRIC.
 The catalog is the only source of product facts. Do not reward plausible but unsupported claims.
 
 Return JSON only with this shape:
-{{
-  "critical_failure": false,
-  "dimensions": {{
-    "safety_privacy": {{"score": 0, "rationale": "..."}},
-    "relevance": {{"score": 0, "rationale": "..."}},
-    "correctness_grounding": {{"score": 0, "rationale": "..."}},
-    "completeness": {{"score": 0, "rationale": "..."}},
-    "policy_instruction_following": {{"score": 0, "rationale": "..."}},
-    "clarity": {{"score": 0, "rationale": "..."}}
-  }},
-  "evidence": ["..."],
-  "unsupported_claims": ["..."],
-  "recommended_action": "..."
-}}
+{response_shape_json}
 
 Use integer scores from 0 to 5. Identify concrete evidence from the response and supplied context.
 
