@@ -1,25 +1,31 @@
 # LLM Quality Intelligence Platform
 
-A reproducible workbench for evaluating LLM response quality across Groq and OpenRouter models. Includes a curated synthetic benchmark, provider adapters, FastAPI service, Streamlit dashboard, transparent heuristic evaluation, human review, CSV exports, and Supabase PostgreSQL persistence.
+A controlled LLM response-quality workbench built around reproducible evaluation, provider comparisons, traceable runs, and human review. Groq and OpenRouter are accessed only by the FastAPI backend. Supabase PostgreSQL stores benchmark runs and annotations.
 
-> Dataset note: `data/benchmark.jsonl` contains 60 purpose-built synthetic examples for engineering and demonstration. It is not real customer data or an externally validated gold standard.
-
-## Capabilities
-- Runs identical benchmark prompts against configured models.
-- Captures responses, latency, token usage when available, errors, and run metadata.
-- Computes transparent reference-overlap and length-sanity diagnostics.
-- Provides a human review queue with ratings, labels, and notes stored in SQLite.
-- Exports benchmark results and the dataset from the dashboard.
+## What it does
+- Runs the same curated benchmark cases across selected models.
+- Captures response text, latency, token usage when available, and provider errors.
+- Computes transparent reference-overlap diagnostics (not a semantic truth score).
+- Stores runs and human annotations in Supabase.
+- Provides a Streamlit review and analytics workspace.
+- Uses an API access token between Streamlit and FastAPI; provider and database credentials remain server-side.
 
 ## Architecture
 ```
-Streamlit UI -> FastAPI -> Provider adapters (Groq / OpenRouter)
-                     |-> benchmark runner -> JSONL benchmark
-                     |-> evaluator -> SQLite run history / annotations
+Streamlit Community Cloud
+       | HTTPS + API token
+       v
+Render FastAPI service ----> Groq API
+       |                    OpenRouter API
+       v
+Supabase PostgreSQL
 ```
 
-## Quick start
-Python 3.10+ recommended.
+## Dataset
+`data/benchmark.jsonl` contains 60 purpose-built synthetic cases across multiple task categories. It is not real customer data and is not an externally validated gold standard.
+
+## Local development
+Python 3.11 recommended.
 
 ```bash
 git clone https://github.com/Harshithpatali/llm-quality-intelligence-platform.git
@@ -28,62 +34,50 @@ python -m venv .venv
 # Windows: .venv\\Scripts\\activate
 # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
 ```
 
-Add API keys to `.env`. Never commit real keys.
+Copy `.env.example` to `.env`, fill in credentials, and run:
 
-Start the API:
 ```bash
 uvicorn backend.main:app --reload --port 8000
-```
-In another terminal:
-```bash
 streamlit run frontend/app.py
 ```
-Open Streamlit at http://localhost:8501 and API docs at http://localhost:8000/docs.
 
-## Configuration
-- `GROQ_API_KEY`: required to call Groq.
-- `OPENROUTER_API_KEY`: required to call OpenRouter.
-- `GROQ_MODEL`: defaults to `llama-3.3-70b-versatile`; change if unavailable.
-- `OPENROUTER_MODELS`: comma-separated model slugs; defaults are examples. Verify availability in the OpenRouter catalog.
-- `SUPABASE_URL`: Supabase project URL.- `SUPABASE_KEY`: Supabase publishable/anon key for the configured access model. Do not use a service-role key in client-facing code.
+API docs: http://localhost:8000/docs
 
-Groq and OpenRouter expose chat-completion APIs. This project uses direct HTTP calls. See [Groq API docs](https://console.groq.com/docs/api-reference) and [OpenRouter quickstart](https://openrouter.ai/docs/quickstart).
+## Deploy
+- **Backend:** Render blueprint in `render.yaml`.
+- **Frontend:** Streamlit Community Cloud; main file path `frontend/app.py`.
+- Follow [STREAMLIT_DEPLOY.md](STREAMLIT_DEPLOY.md) for the exact environment variables and secrets.
 
-## Run without API keys
-The app starts without keys. Dataset inspection and offline tests work; live model calls return a clear configuration error.
+Required Render secrets:
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY` (backend only; never expose in Streamlit)
+- `API_ACCESS_TOKEN` (generate a long random value)
+- `GROQ_API_KEY`
+- `OPENROUTER_API_KEY`
+
+Streamlit secrets:
+- `API_URL` = Render service URL
+- `API_ACCESS_TOKEN` = same token configured on Render
+
+The Supabase schema is in `supabase/schema.sql`. The project tables were provisioned in the connected Supabase project; the SQL file documents the schema for reproducibility. RLS is enabled. The backend uses the service-role key, which must be stored only as a Render secret.
+
+## API
+- `GET /`, `GET /health`: public service metadata and liveness.
+- `GET /ready`: checks Supabase connectivity.
+- `GET /benchmark`: dataset (requires API token).
+- `POST /benchmark/run`: run selected providers and cases (requires token).
+- `GET /runs`, `GET /runs/{run_id}`: run history (requires token).
+- `POST /annotations`, `GET /annotations`: human reviews (requires token).
+
+## Evaluation limitations
+The current score combines reference-term coverage and a response-length sanity heuristic. It is useful for diagnostics, not semantic correctness, relevance, or safety certification. Fluent or keyword-rich responses can still be wrong. Production model decisions should include task-specific expert rubrics, blinded human ratings, inter-annotator agreement, confidence intervals, and safety review.
+
+## Tests
 ```bash
 pytest -q
 ```
 
-## API
-- `GET /health`
-- `GET /benchmark`
-- `POST /benchmark/run` — body: `{"providers":["groq","openrouter"],"limit":10}`
-- `GET /runs`
-- `GET /runs/{run_id}`
-- `POST /annotations`
-- `GET /annotations`
-
-## Evaluation methodology
-Scores are diagnostics, not truth labels:
-- **Reference keyword coverage**: fraction of meaningful reference terms present in the response.
-- **Length sanity**: proxy that penalizes extremely short responses relative to the reference.
-- **Composite heuristic**: weighted combination of the two.
-
-The heuristic is not semantic evaluation and can reward keyword overlap while missing nuance. Human review is included. Do not use benchmark scores as a standalone production launch decision. For stronger evidence, add task-specific expert rubrics, blinded ratings, inter-annotator agreement, and confidence intervals.
-
-## Repository layout
-```
-backend/       FastAPI, providers, evaluator, Supabase persistence, benchmark runner
-frontend/      Streamlit dashboard and human review
-data/          synthetic benchmark JSONL
-tests/         offline tests
-```
-
-## Roadmap
-- Add rubric-specific evaluation, optional model-as-judge with calibration, and blind pairwise preference review.
-- Add bootstrap confidence intervals and inter-annotator agreement.
-- Add authentication, managed database, queueing, and deployment secrets before multi-user production use.
+## Production hardening roadmap
+For a multi-user production launch, add user identity/roles, per-user audit trails, request rate limits, asynchronous benchmark jobs, retry/backoff and provider budgets, retention policies, observability, and load tests. The included Render free plan can sleep when idle.
