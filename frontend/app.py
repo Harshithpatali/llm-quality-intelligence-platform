@@ -58,7 +58,7 @@ st.markdown("<div class='subtle'>Compare model behavior, inspect response traces
 with st.sidebar:
     st.markdown("## ◈ Quality Lab")
     st.caption("LLM evaluation · review · analytics")
-    page=st.radio("WORKSPACE",["Overview","Compare evaluations","Run evaluation","Human review","Test cases"],label_visibility="visible")
+    page=st.radio("WORKSPACE",["Annotation operations","Overview","Compare evaluations","Run evaluation","Human review","Test cases"],label_visibility="visible")
     st.divider()
     st.markdown("**Run configuration**")
     providers=st.multiselect("Providers",["groq","openrouter"],default=["groq","openrouter"])
@@ -199,6 +199,83 @@ elif page=="Human review":
     if annotations:
         st.markdown("### Review history")
         st.dataframe(pd.DataFrame(annotations),use_container_width=True,hide_index=True)
+
+
+elif page=="Annotation operations":
+    st.subheader("Seller response annotation operations")
+    st.caption("Project-created synthetic cases · human labels are separate from model-generated diagnostics.")
+    metrics=api_get("/ops/metrics")
+    if metrics:
+        a,b,c,d=st.columns(4)
+        a.metric("Annotations",metrics.get("annotation_count",0))
+        b.metric("Tasks reviewed",metrics.get("tasks_reviewed",0))
+        c.metric("Annotators",metrics.get("unique_annotators",0))
+        seconds=metrics.get("mean_handling_seconds")
+        d.metric("Mean handling time",f"{seconds:.0f}s" if seconds is not None else "—")
+        st.markdown("### Dimension pass rates")
+        rates=metrics.get("dimension_pass_rate",{})
+        if any(v is not None for v in rates.values()):
+            st.bar_chart(pd.Series({k:v*100 for k,v in rates.items() if v is not None},name="Pass rate (%)"))
+        m1,m2=st.columns(2)
+        m1.metric("Major issue rate",f'{metrics.get("major_issue_rate",0)*100:.1f}%' if metrics.get("major_issue_rate") is not None else "—")
+        m2.metric("Escalation rate",f'{metrics.get("escalation_rate",0)*100:.1f}%' if metrics.get("escalation_rate") is not None else "—")
+    sops=api_get("/ops/sops/active") or []
+    tasks=api_get("/ops/tasks") or []
+    if not sops:
+        st.warning("No active SOP found. Apply supabase/operations_workflow.sql.")
+    elif not tasks:
+        st.warning("No annotation tasks found. Apply supabase/operations_workflow.sql.")
+    else:
+        sop=sops[0]
+        st.markdown(f"**Active SOP:** {sop.get('sop_name')} · v{sop.get('version')}  ")
+        st.caption("This is a demonstration SOP, not an Amazon SOP. Review and adapt it before using it as an operational standard.")
+        task_ids=[t["task_id"] for t in tasks]
+        task_id=st.selectbox("Select task",task_ids,format_func=lambda x:next((f'{t["task_id"]} · {t["category"]} · {t["difficulty"]}' for t in tasks if t["task_id"]==x),x))
+        task=next(t for t in tasks if t["task_id"]==task_id)
+        left,right=st.columns([1,1])
+        with left:
+            st.markdown("#### Customer query")
+            st.info(task["query"])
+            st.markdown("#### Supplied context / policy")
+            st.write(task["context"])
+            st.markdown("#### AI response to annotate")
+            st.write(task["model_response"])
+            with st.expander("Reference behavior (for calibration; avoid using as a shortcut)"):
+                st.write(task["expected_behavior"])
+        with right:
+            st.markdown("#### Apply the SOP")
+            st.caption("Pass = no material issue · Minor = limited issue · Major = material defect · N/A = not assessable")
+            with st.form("ops_annotation_form",clear_on_submit=True):
+                annotator=st.text_input("Annotator ID",value="reviewer-01")
+                relevance=st.selectbox("Relevance",["pass","minor_issue","major_issue","not_applicable"])
+                correctness=st.selectbox("Correctness",["pass","minor_issue","major_issue","not_applicable"])
+                completeness=st.selectbox("Completeness",["pass","minor_issue","major_issue","not_applicable"])
+                overall=st.selectbox("Overall decision",["accept","revise","reject","escalate"])
+                defect=st.selectbox("Primary defect category",["none","irrelevant","unsupported_claim","incorrect_policy","missing_next_step","privacy_or_safety","unclear_or_confusing","other"])
+                evidence=st.text_area("Evidence for decision (required)",placeholder="Quote the response and connect it to the supplied context…")
+                confidence=st.slider("Confidence",1,5,3)
+                handling=st.number_input("Handling time (seconds)",min_value=0,max_value=86400,value=60,step=5)
+                escalated=st.checkbox("Escalated for specialist/policy review")
+                audit=st.checkbox("This is an audit/re-review")
+                submit=st.form_submit_button("Submit annotation",type="primary")
+            if submit:
+                payload={"task_id":task_id,"annotator_id":annotator,"sop_id":sop["sop_id"],"relevance":relevance,"correctness":correctness,"completeness":completeness,"overall_label":overall,"evidence":evidence,"defect_category":defect,"confidence":confidence,"handling_seconds":int(handling),"escalated":escalated,"is_audit":audit}
+                try:
+                    result=api_post("/ops/annotations",payload,timeout=30)
+                    st.success("Annotation saved with SOP version reference.")
+                    st.rerun()
+                except requests.RequestException as e: st.error(f"Could not submit annotation: {e}")
+    st.markdown("### Annotation ledger")
+    ledger=api_get("/ops/annotations") or []
+    if ledger:
+        ledger_df=pd.DataFrame(ledger)
+        st.dataframe(ledger_df,use_container_width=True,hide_index=True)
+        st.download_button("Export auditable annotation ledger",ledger_df.to_csv(index=False),"annotation_ledger.csv","text/csv")
+    else: st.info("No annotations submitted yet.")
+    st.markdown("### Audit trail")
+    audit_rows=api_get("/ops/audit") or []
+    if audit_rows: st.dataframe(pd.DataFrame(audit_rows),use_container_width=True,hide_index=True)
+    else: st.caption("Submission events will appear here after the first annotation.")
 
 else:
     st.subheader("Evaluation dataset")
