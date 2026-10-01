@@ -2,29 +2,25 @@
 
 Deploy the frontend separately on Streamlit Community Cloud. The API runs as a Docker service on Render.
 
-1. In Streamlit Community Cloud, create an app from this repository.
+1. Create an app from this GitHub repository.
 2. Set **Main file path** to `frontend/app.py`.
-3. Add these secrets in the app's Settings → Secrets:
+3. In app settings, add this secret:
 
 ```toml
 API_URL = "https://YOUR-RENDER-SERVICE.onrender.com"
-API_ACCESS_TOKEN = "COPY_THE_RENDER_API_ACCESS_TOKEN"
 ```
 
-4. Keep the API token and Supabase service-role key out of GitHub. The frontend receives only the API access token; Supabase credentials stay on Render.
-5. Redeploy after changing secrets.
+The Streamlit app calls the public Render API over HTTPS. It does not connect directly to Supabase and needs no provider keys or API access token.
 
-The Streamlit app makes server-side HTTP requests to the Render API. It does not connect directly to Supabase.
+## Render backend (manual Docker deployment)
 
-## Render backend (Docker)
+1. In Render, choose **New → Web Service** and connect this repository.
+2. Select **Docker** as the runtime.
+3. Set Dockerfile path to `./Dockerfile` and Docker context directory to `.`.
+4. Set health check path to `/health`.
+5. Configure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`, and `OPENROUTER_API_KEY` as Render environment variables.
+6. Deploy. Render supplies the `PORT` variable used by the container.
 
-1. In Render, choose **New → Blueprint** and connect this repository.
-2. Render reads `render.yaml`, builds the backend using the root `Dockerfile`, and uses `/health` as the health check.
-3. Add the requested secrets in the Render dashboard: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`, and `OPENROUTER_API_KEY`. The blueprint generates `API_ACCESS_TOKEN`.
-4. After the service is live, copy its `onrender.com` URL into Streamlit's `API_URL` secret, and copy the Render `API_ACCESS_TOKEN` into Streamlit's `API_ACCESS_TOKEN` secret.
+Do not configure `API_ACCESS_TOKEN`; the API is intentionally open for this demo. The public benchmark endpoint can trigger provider usage and incur costs. Do not share the URL widely until rate limits and spend controls are implemented.
 
-The Docker image runs only FastAPI. Streamlit is deployed independently by Streamlit Community Cloud. The container listens on Render's injected `PORT` and runs as a non-root user.
-
-## Production note
-
-The free Render instance may spin down when idle. The first request after inactivity can take time. For a public production service, use an always-on plan, add authentication per user, rate limits, background jobs for long benchmark runs, and monitoring.
+The Docker image runs only FastAPI as a non-root user. Streamlit is deployed independently by Streamlit Community Cloud.
