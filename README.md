@@ -126,3 +126,17 @@ All endpoints are public in this demo deployment.
 - Render free services may sleep when idle.
 
 Before treating this as a production service, implement rate limiting and provider budgets, background jobs, robust retry handling, identity/authorization, observability, retention controls, and evaluation calibration against human judgments.
+
+
+## Seller Response Annotation Operations
+
+The flagship workflow is a human-in-the-loop annotation operations demo, not an automated ground-truth generator. It includes 16 **synthetic project-created** seller-support cases, a demonstration SOP, structured human labels for relevance/correctness/completeness, evidence capture, handling time, confidence, escalation, SOP-version linkage, an annotation ledger, audit events, and transparent operational metrics.
+
+### Enable the workflow
+
+1. Run `supabase/operations_workflow.sql` in the Supabase SQL Editor. This creates the workflow tables, seeds the synthetic tasks, and installs a project demonstration SOP v1.
+2. Keep `SUPABASE_SERVICE_ROLE_KEY` only in the backend environment. Never put it in Streamlit secrets or commit it.
+3. Deploy/restart the API and frontend.
+4. Open **Annotation operations**, review the demonstration SOP, and annotate tasks. Use distinct annotator IDs only when distinct people actually perform the reviews.
+
+The task set is synthetic and is not Amazon data or an Amazon SOP. Reference behavior is provided for calibration and must not be represented as independently validated ground truth. The dashboard reports descriptive metrics; it does not infer quality improvements or claim statistical significance. Annotations preserve the SOP ID used at submission. The audit log records submission events; it is not a tamper-proof compliance ledger.
