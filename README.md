@@ -1,16 +1,15 @@
 # LLM Quality Intelligence Platform
 
-A practical, reproducible workbench for evaluating LLM response quality across Groq and OpenRouter models. Includes a curated synthetic benchmark, provider adapters, a FastAPI service, Streamlit dashboard, heuristic evaluation, optional LLM-as-judge, CSV/JSON exports, and tests.
+A reproducible workbench for evaluating LLM response quality across Groq and OpenRouter models. Includes a curated synthetic benchmark, provider adapters, FastAPI service, Streamlit dashboard, transparent heuristic evaluation, human review, CSV exports, and tests.
 
-> Dataset note: `data/benchmark.jsonl` is a purpose-built synthetic benchmark for engineering and demonstration. It is not real customer data and does not represent an externally validated gold standard.
+> Dataset note: `data/benchmark.jsonl` contains 60 purpose-built synthetic examples for engineering and demonstration. It is not real customer data or an externally validated gold standard.
 
-## What it does
-- Runs the same benchmark prompts against configured models for comparable results.
-- Captures response text, latency, token usage when available, errors, and run metadata.
-- Scores answer/reference alignment with transparent deterministic metrics: keyword coverage, answer completeness proxy, and length sanity.
-- Supports optional judge scoring through a configured model (clearly marked as model-judged).
-- Provides a human review queue and stores annotations locally in SQLite.
-- Exports benchmark results and annotations to CSV/JSON.
+## Capabilities
+- Runs identical benchmark prompts against configured models.
+- Captures responses, latency, token usage when available, errors, and run metadata.
+- Computes transparent reference-overlap and length-sanity diagnostics.
+- Provides a human review queue with ratings, labels, and notes stored in SQLite.
+- Exports benchmark results and the dataset from the dashboard.
 
 ## Architecture
 ```
@@ -45,17 +44,16 @@ streamlit run frontend/app.py
 Open Streamlit at http://localhost:8501 and API docs at http://localhost:8000/docs.
 
 ## Configuration
-- `GROQ_API_KEY`: optional; required to call Groq.
-- `OPENROUTER_API_KEY`: optional; required to call OpenRouter.
-- `GROQ_MODEL`: defaults to `llama-3.3-70b-versatile` (change if unavailable in your account).
-- `OPENROUTER_MODELS`: comma-separated model slugs; defaults to two illustrative model IDs. Verify current model availability in the OpenRouter model catalog.
-- `JUDGE_PROVIDER` and `JUDGE_MODEL`: optional model-as-judge configuration.
+- `GROQ_API_KEY`: required to call Groq.
+- `OPENROUTER_API_KEY`: required to call OpenRouter.
+- `GROQ_MODEL`: defaults to `llama-3.3-70b-versatile`; change if unavailable.
+- `OPENROUTER_MODELS`: comma-separated model slugs; defaults are examples. Verify availability in the OpenRouter catalog.
 - `DATABASE_PATH`: defaults to `data/platform.db`.
 
-Groq and OpenRouter both expose chat-completion style APIs; this project uses direct HTTP calls so provider-specific details remain visible and configurable. See [Groq API docs](https://console.groq.com/docs/api-reference) and [OpenRouter quickstart](https://openrouter.ai/docs/quickstart).
+Groq and OpenRouter expose chat-completion APIs. This project uses direct HTTP calls. See [Groq API docs](https://console.groq.com/docs/api-reference) and [OpenRouter quickstart](https://openrouter.ai/docs/quickstart).
 
 ## Run without API keys
-The app starts without keys. You can inspect the dataset and dashboard, but model calls return a clear configuration error. To validate the pipeline offline:
+The app starts without keys. Dataset inspection and offline tests work; live model calls return a clear configuration error.
 ```bash
 pytest -q
 ```
@@ -72,11 +70,10 @@ pytest -q
 ## Evaluation methodology
 Scores are diagnostics, not truth labels:
 - **Reference keyword coverage**: fraction of meaningful reference terms present in the response.
-- **Length sanity**: penalizes extremely short responses relative to reference length.
-- **Composite heuristic**: weighted combination of the above.
-- **Judge score**: optional and model-generated; may be biased and must be reviewed by a human.
+- **Length sanity**: proxy that penalizes extremely short responses relative to the reference.
+- **Composite heuristic**: weighted combination of the two.
 
-Do not use benchmark scores as a standalone production launch decision. Add task-specific expert rubrics, blinded human ratings, inter-annotator agreement, and confidence intervals before making high-stakes comparisons.
+The heuristic is not semantic evaluation and can reward keyword overlap while missing nuance. Human review is included. Do not use benchmark scores as a standalone production launch decision. For stronger evidence, add task-specific expert rubrics, blinded ratings, inter-annotator agreement, and confidence intervals.
 
 ## Repository layout
 ```
@@ -87,6 +84,6 @@ tests/         offline tests
 ```
 
 ## Roadmap
-- Add stratified bootstrap confidence intervals and agreement statistics.
-- Add rubric-specific evaluation and blind pairwise preference review.
-- Add auth, managed database, queueing, and deployment secrets before multi-user production use.
+- Add rubric-specific evaluation, optional model-as-judge with calibration, and blind pairwise preference review.
+- Add bootstrap confidence intervals and inter-annotator agreement.
+- Add authentication, managed database, queueing, and deployment secrets before multi-user production use.
