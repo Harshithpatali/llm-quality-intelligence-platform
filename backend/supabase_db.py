@@ -348,6 +348,26 @@ def activate_rubric(rubric_id: str) -> dict[str, Any] | None:
     )
     return response.data[0] if response.data else None
 
+def get_product_metadata(
+    item_id: str,
+    domain_name: str,
+) -> dict[str, Any] | None:
+    """Return one exact catalog record using the composite item_id + domain key."""
+    response = (
+        get_client()
+        .table(TABLE_PRODUCT_METADATA)
+        .select(
+            "item_id,domain_name,item_name,brand,color,product_type,style,material,"
+            "model_number,bullet_points,bullet_points_text,country,num_bullets"
+        )
+        .eq("item_id", item_id.strip())
+        .eq("domain_name", domain_name.strip())
+        .limit(1)
+        .execute()
+    )
+    return response.data[0] if response.data else None
+
+
 def list_product_metadata(
     q: str | None = None,
     brand: str | None = None,
