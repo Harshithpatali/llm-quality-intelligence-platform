@@ -1,6 +1,6 @@
 # Deploy the Streamlit frontend
 
-Deploy the frontend separately on Streamlit Community Cloud. The API runs on Render.
+Deploy the frontend separately on Streamlit Community Cloud. The API runs as a Docker service on Render.
 
 1. In Streamlit Community Cloud, create an app from this repository.
 2. Set **Main file path** to `frontend/app.py`.
@@ -16,14 +16,14 @@ API_ACCESS_TOKEN = "COPY_THE_RENDER_API_ACCESS_TOKEN"
 
 The Streamlit app makes server-side HTTP requests to the Render API. It does not connect directly to Supabase.
 
-## Render backend
+## Render backend (Docker)
 
-Use the repository's `render.yaml` blueprint, or create a Python web service with:
-- Build: `pip install -r requirements.txt`
-- Start: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
-- Health check: `/health`
+1. In Render, choose **New → Blueprint** and connect this repository.
+2. Render reads `render.yaml`, builds the backend using the root `Dockerfile`, and uses `/health` as the health check.
+3. Add the requested secrets in the Render dashboard: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`, and `OPENROUTER_API_KEY`. The blueprint generates `API_ACCESS_TOKEN`.
+4. After the service is live, copy its `onrender.com` URL into Streamlit's `API_URL` secret, and copy the Render `API_ACCESS_TOKEN` into Streamlit's `API_ACCESS_TOKEN` secret.
 
-Set `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`, and `OPENROUTER_API_KEY` in Render environment settings. Render can generate `API_ACCESS_TOKEN` from the blueprint. Copy that value into Streamlit secrets.
+The Docker image runs only FastAPI. Streamlit is deployed independently by Streamlit Community Cloud. The container listens on Render's injected `PORT` and runs as a non-root user.
 
 ## Production note
 
