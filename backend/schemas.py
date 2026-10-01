@@ -31,3 +31,14 @@ class RubricEditRequest(BaseModel):
 class RubricDecisionRequest(BaseModel):
     reviewer: str = Field(min_length=1, max_length=120)
     review_notes: str = ""
+
+
+class CatalogEvaluationRequest(BaseModel):
+    item_id: str = Field(min_length=1, max_length=120)
+    domain_name: str = Field(min_length=1, max_length=120)
+    user_query: str = Field(min_length=3, max_length=2000)
+    providers: list[Literal["groq", "openrouter"]] = Field(
+        default_factory=lambda: ["groq", "openrouter"]
+    )
+    rubric_id: str | None = None
+    rubric_json: dict | None = None
