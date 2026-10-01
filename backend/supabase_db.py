@@ -79,16 +79,77 @@ def init_db() -> None:
 
 
 def database_status() -> dict[str, Any]:
-    """Validate connectivity and the schema required by the API."""
-    client = get_client()
-    url, _ = _database_config()
+    """Validate connectivity and return safe diagnostics without exposing credentials."""
+    url = _clean_env("SUPABASE_URL")
+    secret_key_present = bool(_clean_env("SUPABASE_SECRET_KEY"))
+    legacy_key_present = bool(_clean_env("SUPABASE_SERVICE_ROLE_KEY"))
+
+    if not url or not (secret_key_present or legacy_key_present):
+        missing = []
+        if not url:
+            missing.append("SUPABASE_URL")
+        if not (secret_key_present or legacy_key_present):
+            missing.append("SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY")
+        return {
+            "configured": False,
+            "host": urlparse(url).netloc if url else None,
+            "credentials_present": False,
+            "missing": missing,
+            "tables": {},
+        }
+
+    try:
+        client = get_client()
+        configured_url, _ = _database_config()
+    except Exception as exc:
+        return {
+            "configured": True,
+            "host": urlparse(url).netloc,
+            "credentials_present": True,
+            "connection_ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:300],
+            "tables": {},
+        }
+
     checked: dict[str, bool] = {}
-    for table, probe_column in _REQUIRED_TABLES.items():
-        client.table(table).select(probe_column).limit(1).execute()
-        checked[table] = True
+    failed_table = None
+    try:
+        for table, probe_column in _REQUIRED_TABLES.items():
+            try:
+                client.table(table).select(probe_column).limit(1).execute()
+                checked[table] = True
+            except Exception as exc:
+                failed_table = table
+                checked[table] = False
+                return {
+                    "configured": True,
+                    "host": urlparse(configured_url).netloc,
+                    "credentials_present": True,
+                    "connection_ok": True,
+                    "schema_ok": False,
+                    "failed_table": failed_table,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:300],
+                    "tables": checked,
+                }
+    except Exception as exc:
+        return {
+            "configured": True,
+            "host": urlparse(configured_url).netloc,
+            "credentials_present": True,
+            "connection_ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:300],
+            "tables": checked,
+        }
 
     return {
-        "host": urlparse(url).netloc,
+        "configured": True,
+        "host": urlparse(configured_url).netloc,
+        "credentials_present": True,
+        "connection_ok": True,
+        "schema_ok": True,
         "tables": checked,
     }
 
