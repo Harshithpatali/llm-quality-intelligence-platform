@@ -25,17 +25,17 @@ def health():
 
 @app.get("/ready")
 def ready():
-    try:
-        return {"status": "ready", "database": db.database_status()}
-    except Exception as exc:
-        logger.exception(
-            "Readiness check failed; verify SUPABASE_URL and "
-            "SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY in the API environment"
-        )
-        raise HTTPException(
-            status_code=503,
-            detail="Database is not ready. Verify the API Supabase configuration and schema.",
-        ) from exc
+    database = db.database_status()
+    if database.get("connection_ok") and database.get("schema_ok"):
+        return {"status": "ready", "database": database}
+    logger.error("Readiness check failed: %s", database)
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "message": "Database is not ready.",
+            "database": database,
+        },
+    )
 
 @app.get("/benchmark")
 def benchmark():
