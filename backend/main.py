@@ -7,7 +7,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from . import db
 from .benchmark import load_dataset, run_benchmark
-from .schemas import AnnotationRequest, RunRequest, RubricDraftRequest, RubricEditRequest, RubricDecisionRequest
+from .catalog_eval import DEFAULT_CATALOG_RUBRIC, run_catalog_evaluation
+from .schemas import AnnotationRequest, RunRequest, RubricDraftRequest, RubricEditRequest, RubricDecisionRequest, CatalogEvaluationRequest
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -170,6 +171,81 @@ def products(
         raise HTTPException(
             status_code=503,
             detail="Could not list catalog product metadata. Verify the API Supabase project, key, and catalog schema.",
+        ) from exc
+
+
+@app.post("/catalog/evaluate")
+def evaluate_catalog_response(req: CatalogEvaluationRequest):
+    try:
+        product = db.get_product_metadata(req.item_id, req.domain_name)
+        if not product:
+            raise HTTPException(status_code=404, detail="Catalog product not found for item_id + domain_name.")
+
+        if req.rubric_json is not None:
+            rubric = req.rubric_json
+            rubric_source = "request"
+        elif req.rubric_id:
+            rubric_row = db.get_rubric(req.rubric_id)
+            if not rubric_row:
+                raise HTTPException(status_code=404, detail="Rubric not found")
+            rubric = rubric_row["rubric_json"]
+            rubric_source = {
+                "rubric_id": rubric_row["rubric_id"],
+                "rubric_name": rubric_row["rubric_name"],
+                "version": rubric_row["version"],
+                "status": rubric_row["status"],
+            }
+        else:
+            active = [
+                row
+                for row in db.list_rubrics("Catalog Response Quality")
+                if row.get("status") == "active"
+            ]
+            if active:
+                row = active[0]
+                rubric = row["rubric_json"]
+                rubric_source = {
+                    "rubric_id": row["rubric_id"],
+                    "rubric_name": row["rubric_name"],
+                    "version": row["version"],
+                    "status": row["status"],
+                }
+            else:
+                rubric = DEFAULT_CATALOG_RUBRIC
+                rubric_source = "built_in_demo"
+
+        evaluation = run_catalog_evaluation(
+            product=product,
+            user_query=req.user_query.strip(),
+            providers=req.providers,
+            rubric=rubric,
+        )
+        created = datetime.now(timezone.utc).isoformat()
+        run_id = str(uuid4())
+        config = {
+            "run_type": "catalog_response_evaluation",
+            "item_id": product["item_id"],
+            "domain_name": product["domain_name"],
+            "user_query": req.user_query.strip(),
+            "providers": req.providers,
+            "rubric_source": rubric_source,
+        }
+        db.save_run(run_id, created, "completed", config, evaluation["results"])
+        evaluation.update({
+            "run_id": run_id,
+            "created_at": created,
+            "run_type": "catalog_response_evaluation",
+            "product": product,
+            "rubric_source": rubric_source,
+        })
+        return evaluation
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Catalog response evaluation failed")
+        raise HTTPException(
+            status_code=502,
+            detail="Catalog response evaluation failed. Check provider configuration, rubric structure, and API logs.",
         ) from exc
 
 
