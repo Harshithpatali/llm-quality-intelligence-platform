@@ -39,7 +39,13 @@ def api_get(path, params=None):
         st.error(f"API request failed: {e}"); return None
 
 def api_post(path,payload,timeout=1800):
-    r=requests.post(API+path,headers=headers(),json=payload,timeout=timeout); r.raise_for_status(); return r.json()
+    try:
+        r=requests.post(API+path,headers=headers(),json=payload,timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+    except requests.HTTPError as e:
+        detail = r.text[:2000] if r is not None else str(e)
+        raise requests.HTTPError(f"{e} | Response: {detail}", response=r) from e
 
 def frame_results(results):
     df=pd.DataFrame(results or [])
@@ -329,12 +335,21 @@ elif page=="Annotation operations":
                 audit=st.checkbox("This is an audit/re-review")
                 submit=st.form_submit_button("Submit annotation",type="primary")
             if submit:
-                payload={"task_id":task_id,"annotator_id":annotator,"sop_id":sop["sop_id"],"relevance":relevance,"correctness":correctness,"completeness":completeness,"overall_label":overall,"evidence":evidence,"defect_category":defect,"confidence":confidence,"handling_seconds":int(handling),"escalated":escalated,"is_audit":audit}
-                try:
-                    result=api_post("/ops/annotations",payload,timeout=30)
-                    st.success("Annotation saved with SOP version reference.")
-                    st.rerun()
-                except requests.RequestException as e: st.error(f"Could not submit annotation: {e}")
+                evidence_clean=evidence.strip()
+                if len(annotator.strip()) < 1:
+                    st.error("Annotator ID is required.")
+                elif len(evidence_clean) < 8:
+                    st.error("Evidence must contain at least 8 characters and should explain the decision.")
+                elif len(evidence_clean) > 4000:
+                    st.error("Evidence must be 4,000 characters or fewer.")
+                else:
+                    payload={"task_id":task_id,"annotator_id":annotator.strip(),"sop_id":sop["sop_id"],"relevance":relevance,"correctness":correctness,"completeness":completeness,"overall_label":overall,"evidence":evidence_clean,"defect_category":defect,"confidence":confidence,"handling_seconds":int(handling),"escalated":escalated,"is_audit":audit}
+                    try:
+                        result=api_post("/ops/annotations",payload,timeout=30)
+                        st.success("Annotation saved with SOP version reference.")
+                        st.rerun()
+                    except requests.RequestException as e:
+                        st.error(f"Could not submit annotation: {e}")
     st.markdown("### Annotation ledger")
     ledger=api_get("/ops/annotations") or []
     if ledger:
