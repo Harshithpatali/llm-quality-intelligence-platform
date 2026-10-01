@@ -21,6 +21,7 @@ from .supabase_db import (
     list_sops,
     review_sop,
     activate_sop,
+    list_product_metadata,
 )
 
 __all__ = [
@@ -46,4 +47,5 @@ __all__ = [
     "list_sops",
     "review_sop",
     "activate_sop",
+    "list_product_metadata",
 ]
