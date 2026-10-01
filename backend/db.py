@@ -1,5 +1,6 @@
 from .supabase_db import (
     get_client,
+    database_status,
     init_db,
     save_run,
     list_runs,
@@ -26,6 +27,7 @@ from .supabase_db import (
 
 __all__ = [
     "get_client",
+    "database_status",
     "init_db",
     "save_run",
     "list_runs",
