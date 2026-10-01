@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 from typing import Any
 from dotenv import load_dotenv
 from supabase import Client, create_client
@@ -61,7 +62,7 @@ def get_rubric(rubric_id: str) -> dict[str, Any] | None:
     return response.data[0] if response.data else None
 
 def update_rubric(rubric_id: str, rubric_json: dict[str, Any], review_notes: str, reviewer: str) -> dict[str, Any] | None:
-    response = get_client().table(TABLE_RUBRICS).update({"rubric_json": rubric_json, "review_notes": review_notes, "reviewed_by": reviewer, "updated_at": "now()"}).eq("rubric_id", rubric_id).eq("status", "draft").execute()
+    response = get_client().table(TABLE_RUBRICS).update({"rubric_json": rubric_json, "review_notes": review_notes, "reviewed_by": reviewer, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("rubric_id", rubric_id).eq("status", "draft").execute()
     return response.data[0] if response.data else None
 
 def approve_rubric(rubric_id: str, reviewer: str, review_notes: str) -> dict[str, Any] | None:
