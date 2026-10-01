@@ -1,4 +1,5 @@
 import os
+import os
 import requests
 import pandas as pd
 import streamlit as st
@@ -31,9 +32,9 @@ div.stButton>button[kind="primary"] {border-radius:9px;}
 def headers():
     return {}
 
-def api_get(path):
+def api_get(path, params=None):
     try:
-        r=requests.get(API+path,headers=headers(),timeout=25); r.raise_for_status(); return r.json()
+        r=requests.get(API+path,headers=headers(),params=params,timeout=25); r.raise_for_status(); return r.json()
     except requests.RequestException as e:
         st.error(f"API request failed: {e}"); return None
 
@@ -57,7 +58,7 @@ st.markdown("<div class='subtle'>Compare model behavior, inspect response traces
 with st.sidebar:
     st.markdown("## ◈ Quality Lab")
     st.caption("LLM evaluation · review · analytics")
-    page=st.radio("WORKSPACE",["Annotation operations","Calibration","Overview","Compare evaluations","Run evaluation","Human review","Test cases"],label_visibility="visible")
+    page=st.radio("WORKSPACE",["Annotation operations","Calibration","Catalog grounding","Overview","Compare evaluations","Run evaluation","Human review","Test cases"],label_visibility="visible")
     st.divider()
     st.markdown("**Run configuration**")
     providers=st.multiselect("Providers",["groq","openrouter"],default=["groq","openrouter"])
@@ -71,6 +72,45 @@ with st.sidebar:
 runs=api_get("/runs")
 runs=runs or []
 run_options=[x.get("run_id") for x in runs if x.get("run_id")]
+
+elif page=="Catalog grounding":
+    st.subheader("Catalog grounding")
+    st.caption("Browse the uploaded Amazon item-list metadata used as product/catalog grounding data for this portfolio project. This is catalog metadata, not Amazon internal customer or support data.")
+    c1,c2,c3=st.columns([2,1,1])
+    with c1:
+        q=st.text_input("Product name search",placeholder="Search product names…")
+    with c2:
+        product_type=st.text_input("Product type",placeholder="e.g. CELLULAR_PHONE_CASE")
+    with c3:
+        domain_name=st.text_input("Marketplace",placeholder="e.g. amazon.in")
+    catalog=api_get("/ops/products",params={
+        "q":q.strip() or None,
+        "product_type":product_type.strip() or None,
+        "domain_name":domain_name.strip() or None,
+        "limit":100,
+    }) or []
+    st.metric("Rows returned",len(catalog))
+    if catalog:
+        df=pd.DataFrame(catalog)
+        display_cols=[c for c in ["item_id","domain_name","item_name","brand","product_type","color","material","model_number","country","num_bullets"] if c in df.columns]
+        st.dataframe(df[display_cols],use_container_width=True,hide_index=True)
+        selected_id=st.selectbox("Inspect item",range(len(catalog)),format_func=lambda i:f'{catalog[i]["item_id"]} · {catalog[i].get("brand") or "—"}')
+        item=catalog[selected_id]
+        left,right=st.columns([1,1])
+        with left:
+            st.markdown("#### Product metadata")
+            st.json({k:item.get(k) for k in ["item_id","domain_name","item_name","brand","color","product_type","style","material","model_number","country","num_bullets"]})
+        with right:
+            st.markdown("#### Bullet points")
+            bullets=item.get("bullet_points") or []
+            if bullets:
+                for b in bullets:
+                    st.write(f"• {b}")
+            else:
+                st.caption("No bullet points supplied.")
+    else:
+        st.info("No catalog records matched the current filters.")
+
 if page=="Overview":
     st.subheader("Quality overview")
     if not runs:
