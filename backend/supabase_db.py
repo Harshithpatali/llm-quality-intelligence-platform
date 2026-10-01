@@ -77,3 +77,31 @@ def activate_rubric(rubric_id: str) -> dict[str, Any] | None:
     client.table(TABLE_RUBRICS).update({"status": "retired"}).eq("rubric_name", current["rubric_name"]).eq("status", "active").execute()
     response = client.table(TABLE_RUBRICS).update({"status": "active"}).eq("rubric_id", rubric_id).eq("status", "approved").execute()
     return response.data[0] if response.data else None
+
+
+# Auditable annotation operations
+def list_annotation_tasks(category: str | None = None) -> list[dict[str, Any]]:
+    query = get_client().table("annotation_tasks").select("*").order("task_id").limit(500)
+    if category: query = query.eq("category", category)
+    return query.execute().data or []
+
+def list_active_sops() -> list[dict[str, Any]]:
+    return get_client().table("annotation_sops").select("*").eq("status", "active").order("version", desc=True).execute().data or []
+
+def submit_annotation(payload: dict[str, Any]) -> dict[str, Any]:
+    client = get_client()
+    row = {**payload, "id": payload.get("id") or __import__("uuid").uuid4().hex}
+    result = client.table("annotation_submissions").insert(row).execute().data[0]
+    client.table("annotation_audit_events").insert({
+        "entity_type": "annotation", "entity_id": result["id"], "action": "submitted",
+        "actor": payload["annotator_id"], "details_json": {"task_id": payload["task_id"], "sop_id": payload["sop_id"]}
+    }).execute()
+    return result
+
+def list_submissions(task_id: str | None = None) -> list[dict[str, Any]]:
+    query = get_client().table("annotation_submissions").select("*").order("created_at", desc=True).limit(2000)
+    if task_id: query = query.eq("task_id", task_id)
+    return query.execute().data or []
+
+def record_audit_event(entity_type: str, entity_id: str, action: str, actor: str, details: dict[str, Any]) -> None:
+    get_client().table("annotation_audit_events").insert({"entity_type": entity_type, "entity_id": entity_id, "action": action, "actor": actor, "details_json": details}).execute()
