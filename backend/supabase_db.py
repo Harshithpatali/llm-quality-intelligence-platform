@@ -12,11 +12,13 @@ load_dotenv()
 TABLE_RUNS = "llm_benchmark_runs"
 TABLE_ANNOTATIONS = "llm_annotations"
 TABLE_RUBRICS = "llm_rubrics"
+TABLE_PRODUCT_METADATA = "amazon_itemlist_metadata"
 
 _REQUIRED_TABLES = {
     TABLE_RUNS: "run_id",
     TABLE_ANNOTATIONS: "id",
     TABLE_RUBRICS: "rubric_id",
+    TABLE_PRODUCT_METADATA: "item_id",
     "annotation_tasks": "task_id",
     "annotation_sops": "sop_id",
     "annotation_submissions": "id",
@@ -284,6 +286,35 @@ def activate_rubric(rubric_id: str) -> dict[str, Any] | None:
         .execute()
     )
     return response.data[0] if response.data else None
+
+def list_product_metadata(
+    q: str | None = None,
+    brand: str | None = None,
+    product_type: str | None = None,
+    domain_name: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Search the project catalog grounding dataset without exposing backend credentials."""
+    client = get_client()
+    safe_limit = max(1, min(int(limit), 100))
+    query = (
+        client.table(TABLE_PRODUCT_METADATA)
+        .select(
+            "item_id,domain_name,item_name,brand,color,product_type,style,material,"
+            "model_number,bullet_points,bullet_points_text,country,num_bullets"
+        )
+        .order("item_name")
+        .limit(safe_limit)
+    )
+    if q and q.strip():
+        query = query.ilike("item_name", f"%{q.strip()}%")
+    if brand and brand.strip():
+        query = query.eq("brand", brand.strip())
+    if product_type and product_type.strip():
+        query = query.eq("product_type", product_type.strip())
+    if domain_name and domain_name.strip():
+        query = query.eq("domain_name", domain_name.strip())
+    return query.execute().data or []
 
 
 # Auditable annotation operations
