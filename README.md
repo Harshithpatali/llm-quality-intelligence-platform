@@ -10,6 +10,7 @@ A portfolio-grade LLM evaluation workbench for reproducible model comparisons, r
 - Record structured human labels and reviewer notes.
 - Persist runs, annotations, and catalog grounding metadata in Supabase PostgreSQL.
 - Search 7,908 uploaded Amazon item-list metadata records across 29 marketplace domains.
+- Run catalog-grounded response evaluations: keyword-search a product, send the same product-grounded question to three configured models, then score each response with a rubric across safety/privacy, relevance, correctness/grounding, completeness, policy/instruction following, and clarity.
 - Deploy the API as a Docker service on Render and the UI independently on Streamlit Community Cloud.
 - Run automated tests in GitHub Actions.
 
@@ -152,3 +153,37 @@ The annotation task set is synthetic and is not Amazon data or an Amazon SOP. Se
 ### Multi-model evaluation
 
 The default evaluation configuration runs three model calls when both providers are selected: the configured Groq model plus two OpenRouter models (`openai/gpt-oss-120b` and `deepseek/deepseek-v4-flash-0731`). OpenRouter model slugs should be kept in a comma-separated `OPENROUTER_MODELS` environment variable.
+
+
+## Catalog-grounded response evaluation
+
+The Catalog response lab is the end-to-end product-quality workflow added on top of the benchmark and annotation layers:
+
+\`\`\`text
+User keyword
+    ↓
+Supplied product catalog metadata
+    ↓
+Select product + ask a product-support question
+    ↓
+Same grounded prompt → Model 1 / Model 2 / Model 3
+    ↓
+Per-response rubric judge
+    ↓
+Safety & privacy
+Relevance
+Correctness / catalog grounding
+Completeness
+Policy / instruction following
+Clarity
+    ↓
+Weighted score + evidence + unsupported claims
+    ↓
+Persisted evaluation run → human review / annotation
+\`\`\`
+
+The evaluator treats the uploaded item-list metadata as product grounding context. It does not represent the dataset as Amazon internal customer, support, policy, or proprietary operational data. When a requested attribute is absent from the catalog record, the generation prompt explicitly instructs the model to say that the supplied metadata does not specify it rather than inventing a value.
+
+The rubric is stored as structured JSON when a saved active rubric is selected; otherwise the workflow uses a built-in demonstration rubric. The rubric judge is configured with JUDGE_PROVIDER and JUDGE_MODEL. With the current default generation configuration, selecting both providers produces the configured Groq model plus the two OpenRouter models, while the judge is run separately so the model-generation traces remain comparable.
+
+This design is intentionally different from a generic LLM leaderboard. The product search creates a realistic grounding problem, the three generation traces create comparable model behavior, and the rubric layer turns each trace into auditable quality evidence before a human reviewer makes the final judgment.
