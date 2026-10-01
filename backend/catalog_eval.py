@@ -216,7 +216,7 @@ def judge_response(
         for name in rubric.get("dimensions", {})
     }
     response_shape = {
-        "critical_failure": false,
+        "critical_failure": False,
         "dimensions": dimension_shape,
         "evidence": ["..."],
         "unsupported_claims": ["..."],
