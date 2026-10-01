@@ -129,3 +129,75 @@ def activate_rubric(rubric_id: str):
         raise HTTPException(status_code=503, detail="Could not activate rubric") from exc
     if not row: raise HTTPException(status_code=409, detail="Only approved rubrics can be activated")
     return row
+
+
+from .ops_metrics import summarize_annotations
+from pydantic import BaseModel, Field
+from typing import Literal
+
+class OperationalAnnotationRequest(BaseModel):
+    task_id: str
+    annotator_id: str = Field(min_length=1, max_length=120)
+    sop_id: str
+    relevance: Literal["pass", "minor_issue", "major_issue", "not_applicable"]
+    correctness: Literal["pass", "minor_issue", "major_issue", "not_applicable"]
+    completeness: Literal["pass", "minor_issue", "major_issue", "not_applicable"]
+    overall_label: Literal["accept", "revise", "reject", "escalate"]
+    evidence: str = Field(min_length=8, max_length=4000)
+    defect_category: str = "none"
+    confidence: int = Field(ge=1, le=5)
+    handling_seconds: int = Field(ge=0, le=86400)
+    escalated: bool = False
+    is_audit: bool = False
+
+@app.get("/ops/tasks")
+def operational_tasks(category: str | None = None):
+    try: return db.list_annotation_tasks(category)
+    except Exception as exc:
+        logger.exception("Could not list annotation tasks")
+        raise HTTPException(status_code=503, detail="Apply supabase/operations_workflow.sql and check database configuration") from exc
+
+@app.get("/ops/sops/active")
+def active_sops():
+    try: return db.list_active_sops()
+    except Exception as exc:
+        logger.exception("Could not list active SOPs")
+        raise HTTPException(status_code=503, detail="Could not list active SOPs") from exc
+
+@app.post("/ops/annotations", status_code=201)
+def submit_operational_annotation(req: OperationalAnnotationRequest):
+    try:
+        task = next((x for x in db.list_annotation_tasks() if x["task_id"] == req.task_id), None)
+        if not task: raise HTTPException(status_code=404, detail="Task not found")
+        sop = next((x for x in db.list_active_sops() if x["sop_id"] == req.sop_id), None)
+        if not sop: raise HTTPException(status_code=409, detail="SOP is not active")
+        row = db.submit_annotation(req.model_dump())
+        return {"status": "submitted", "annotation": row}
+    except HTTPException: raise
+    except Exception as exc:
+        logger.exception("Could not submit operational annotation")
+        raise HTTPException(status_code=503, detail="Could not submit annotation; apply workflow migration and seed tasks") from exc
+
+@app.get("/ops/annotations")
+def operational_annotations(task_id: str | None = None):
+    try: return db.list_submissions(task_id)
+    except Exception as exc:
+        logger.exception("Could not list operational annotations")
+        raise HTTPException(status_code=503, detail="Could not list annotations") from exc
+
+@app.get("/ops/metrics")
+def operational_metrics():
+    try:
+        rows = db.list_submissions()
+        return summarize_annotations(rows)
+    except Exception as exc:
+        logger.exception("Could not calculate operational metrics")
+        raise HTTPException(status_code=503, detail="Could not calculate metrics") from exc
+
+@app.get("/ops/audit")
+def audit_log():
+    try:
+        return db.get_client().table("annotation_audit_events").select("*").order("created_at", desc=True).limit(500).execute().data or []
+    except Exception as exc:
+        logger.exception("Could not retrieve audit events")
+        raise HTTPException(status_code=503, detail="Could not retrieve audit events") from exc
