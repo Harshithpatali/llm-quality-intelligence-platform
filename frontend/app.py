@@ -1,5 +1,4 @@
 import os
-import os
 import requests
 import pandas as pd
 import streamlit as st
@@ -64,7 +63,7 @@ st.markdown("<div class='subtle'>Compare model behavior, inspect response traces
 with st.sidebar:
     st.markdown("## ◈ Quality Lab")
     st.caption("LLM evaluation · review · analytics")
-    page=st.radio("WORKSPACE",["Annotation operations","Calibration","Catalog grounding","Overview","Compare evaluations","Run evaluation","Human review","Test cases"],label_visibility="visible")
+    page=st.radio("WORKSPACE",["Annotation operations","Calibration","Catalog response lab","Catalog grounding","Overview","Compare evaluations","Run evaluation","Human review","Test cases"],label_visibility="visible")
     st.divider()
     st.markdown("**Run configuration**")
     providers=st.multiselect("Providers",["groq","openrouter"],default=["groq","openrouter"])
@@ -78,6 +77,189 @@ with st.sidebar:
 runs=api_get("/runs")
 runs=runs or []
 run_options=[x.get("run_id") for x in runs if x.get("run_id")]
+
+if page=="Catalog response lab":
+    st.subheader("Catalog-grounded response evaluation")
+    st.caption(
+        "Search the supplied item-list metadata, ask a product question, run the same grounded prompt across the configured models, "
+        "then score each response with the selected rubric. The catalog file is project-supplied metadata, not Amazon internal support data."
+    )
+
+    c1,c2,c3=st.columns([2,1,1])
+    with c1:
+        q=st.text_input("Search product",placeholder="e.g. wireless, drawer slides, phone case…",key="catalog_eval_q")
+    with c2:
+        product_type=st.text_input("Product type",placeholder="optional",key="catalog_eval_type")
+    with c3:
+        domain_name=st.text_input("Marketplace",placeholder="optional",key="catalog_eval_domain")
+
+    catalog=api_get("/ops/products",params={
+        "q":q.strip() or None,
+        "product_type":product_type.strip() or None,
+        "domain_name":domain_name.strip() or None,
+        "limit":50,
+    }) or []
+
+    if not catalog:
+        st.info("No catalog records matched the search.")
+    else:
+        selected=st.selectbox(
+            "Select product",
+            range(len(catalog)),
+            format_func=lambda i: f'{catalog[i]["item_id"]} · {catalog[i].get("item_name") or "Unnamed item"} · {catalog[i].get("domain_name")}',
+            key="catalog_eval_product",
+        )
+        item=catalog[selected]
+
+        left,right=st.columns([1,1])
+        with left:
+            st.markdown("#### Product grounding context")
+            st.write({
+                k:item.get(k)
+                for k in ["item_id","domain_name","item_name","brand","color","product_type","style","material","model_number","country"]
+                if item.get(k) not in (None,"")
+            })
+        with right:
+            st.markdown("#### Catalog bullet points")
+            bullets=item.get("bullet_points") or []
+            if bullets:
+                for bullet in bullets:
+                    st.write(f"• {bullet}")
+            else:
+                st.caption("No bullet points supplied.")
+
+        st.markdown("#### User question")
+        user_query=st.text_area(
+            "Ask a product question that a seller/customer-support assistant should answer",
+            placeholder="Example: Does this product specify a material and color?",
+            height=100,
+            key="catalog_eval_query",
+        )
+
+        rubric_rows=api_get("/rubrics",params={"rubric_name":"Catalog Response Quality"}) or []
+        active_rubrics=[r for r in rubric_rows if r.get("status")=="active"]
+        rubric_options=["built_in_demo"] + [r["rubric_id"] for r in active_rubrics]
+        selected_rubric=st.selectbox(
+            "Rubric",
+            rubric_options,
+            format_func=lambda rid: (
+                "Built-in Catalog Response Quality v1"
+                if rid=="built_in_demo"
+                else next(
+                    (f'{r.get("rubric_name")} · v{r.get("version")} · active' for r in active_rubrics if r.get("rubric_id")==rid),
+                    rid,
+                )
+            ),
+            key="catalog_eval_rubric",
+        )
+
+        st.markdown(
+            "<div class='panel'><b>Evaluation flow</b><br>"
+            "1. Retrieve product metadata → 2. Generate the same grounded answer with each configured model → "
+            "3. Judge every response against safety, relevance, correctness/grounding, completeness, policy/instruction following, and clarity → "
+            "4. Persist the trace and rubric result as an evaluation run.</div>",
+            unsafe_allow_html=True,
+        )
+
+        run_button=st.button(
+            "▶ Generate and score responses",
+            type="primary",
+            disabled=(not user_query.strip()),
+            key="catalog_eval_run",
+        )
+        if run_button:
+            payload={
+                "item_id":item["item_id"],
+                "domain_name":item["domain_name"],
+                "user_query":user_query.strip(),
+                "providers":providers,
+            }
+            if selected_rubric!="built_in_demo":
+                payload["rubric_id"]=selected_rubric
+
+            with st.spinner("Running the configured generation models and rubric judge…"):
+                try:
+                    data=api_post("/catalog/evaluate",payload,timeout=1800)
+                    st.success(
+                        f'Catalog evaluation completed · {data.get("successful_responses",0)} successful model responses '
+                        f'of {data.get("models_requested",0)} configured model calls.'
+                    )
+
+                    results=data.get("results",[])
+                    good=[r for r in results if r.get("status")=="success" and isinstance(r.get("rubric_evaluation"),dict)]
+                    rows=[]
+                    for r in good:
+                        ev=r["rubric_evaluation"]
+                        row={
+                            "provider":r.get("provider"),
+                            "model":r.get("model"),
+                            "decision":ev.get("decision"),
+                            "overall_score":ev.get("overall_score"),
+                            "critical_failure":ev.get("critical_failure"),
+                        }
+                        for name,entry in (ev.get("dimensions") or {}).items():
+                            row[name]=entry.get("score") if isinstance(entry,dict) else None
+                        rows.append(row)
+
+                    if rows:
+                        st.markdown("### Rubric scorecard")
+                        st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+
+                    st.markdown("### Model responses and evidence")
+                    for idx,r in enumerate(results):
+                        label=f'{r.get("provider")} · {r.get("model")}'
+                        with st.expander(label,expanded=(idx==0)):
+                            if r.get("status")!="success":
+                                st.error(r.get("error","Model call failed."))
+                                continue
+
+                            st.markdown("**Model response**")
+                            st.markdown(f"<div class='panel'>{r.get('response','')}</div>",unsafe_allow_html=True)
+
+                            ev=r.get("rubric_evaluation")
+                            if not isinstance(ev,dict):
+                                st.warning("Rubric scoring failed for this response.")
+                                continue
+                            m1,m2,m3,m4=st.columns(4)
+                            m1.metric("Overall",f'{ev.get("overall_score","—")}/100')
+                            m2.metric("Decision",str(ev.get("decision","—")).upper())
+                            m3.metric("Critical failure","Yes" if ev.get("critical_failure") else "No")
+                            m4.metric("Judge",f'{ev.get("judge_provider","")} / {ev.get("judge_model","")}')
+
+                            st.markdown("**Dimension scores**")
+                            dims=ev.get("dimensions") or {}
+                            dim_df=pd.DataFrame([
+                                {
+                                    "dimension":name,
+                                    "score":entry.get("score"),
+                                    "rationale":entry.get("rationale",""),
+                                }
+                                for name,entry in dims.items()
+                                if isinstance(entry,dict)
+                            ])
+                            if not dim_df.empty:
+                                st.dataframe(dim_df,use_container_width=True,hide_index=True)
+
+                            evidence=ev.get("evidence") or []
+                            unsupported=ev.get("unsupported_claims") or []
+                            if evidence:
+                                st.markdown("**Evidence**")
+                                for x in evidence:
+                                    st.write(f"• {x}")
+                            if unsupported:
+                                st.markdown("**Unsupported claims detected**")
+                                for x in unsupported:
+                                    st.write(f"• {x}")
+                            if ev.get("recommended_action"):
+                                st.info(ev["recommended_action"])
+
+                    st.caption(
+                        "Rubric judgments are model-generated evaluation signals. They are not expert-validated ground truth; "
+                        "human annotation remains the final review layer."
+                    )
+                except requests.RequestException as e:
+                    st.error(f"Catalog evaluation failed: {e}")
+
 
 if page=="Catalog grounding":
     st.subheader("Catalog grounding")
