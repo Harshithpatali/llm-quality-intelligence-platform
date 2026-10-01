@@ -105,3 +105,37 @@ def list_submissions(task_id: str | None = None) -> list[dict[str, Any]]:
 
 def record_audit_event(entity_type: str, entity_id: str, action: str, actor: str, details: dict[str, Any]) -> None:
     get_client().table("annotation_audit_events").insert({"entity_type": entity_type, "entity_id": entity_id, "action": action, "actor": actor, "details_json": details}).execute()
+
+
+from uuid import uuid4
+
+def create_sop_draft(name: str, content_json: dict, change_summary: str, created_by: str) -> dict[str, Any]:
+    client = get_client()
+    latest = client.table("annotation_sops").select("version").eq("sop_name", name).order("version", desc=True).limit(1).execute()
+    version = int(latest.data[0]["version"]) + 1 if latest.data else 1
+    row = {"sop_id": str(uuid4()), "sop_name": name, "version": version, "status": "draft",
+           "content_json": content_json, "change_summary": change_summary, "created_by": created_by}
+    return client.table("annotation_sops").insert(row).execute().data[0]
+
+def list_sops() -> list[dict[str, Any]]:
+    return get_client().table("annotation_sops").select("*").order("created_at", desc=True).limit(200).execute().data or []
+
+def review_sop(sop_id: str, reviewer: str, approve: bool) -> dict[str, Any] | None:
+    status = "approved" if approve else "retired"
+    result = get_client().table("annotation_sops").update({
+        "status": status, "reviewed_by": reviewer,
+        "approved_at": datetime.now(timezone.utc).isoformat() if approve else None
+    }).eq("sop_id", sop_id).eq("status", "draft").execute()
+    return result.data[0] if result.data else None
+
+def activate_sop(sop_id: str, actor: str) -> dict[str, Any] | None:
+    client = get_client()
+    found = client.table("annotation_sops").select("*").eq("sop_id", sop_id).limit(1).execute().data
+    if not found or found[0]["status"] != "approved": return None
+    row = found[0]
+    client.table("annotation_sops").update({"status":"retired"}).eq("sop_name",row["sop_name"]).eq("status","active").execute()
+    result = client.table("annotation_sops").update({"status":"active","activated_at":datetime.now(timezone.utc).isoformat()}).eq("sop_id",sop_id).eq("status","approved").execute()
+    if result.data:
+        record_audit_event("sop",sop_id,"activated",actor,{"version":row["version"],"sop_name":row["sop_name"]})
+        return result.data[0]
+    return None
