@@ -388,7 +388,12 @@ def list_product_metadata(
         .limit(safe_limit)
     )
     if q and q.strip():
-        query = query.ilike("item_name", f"%{q.strip()}%")
+        term = q.strip().replace("%", "\\%").replace(",", "\\,")
+        query = query.or_(
+            "item_name.ilike.%{0}%,brand.ilike.%{0}%,product_type.ilike.%{0}%,bullet_points_text.ilike.%{0}%".format(
+                term
+            )
+        )
     if brand and brand.strip():
         query = query.eq("brand", brand.strip())
     if product_type and product_type.strip():
