@@ -1,6 +1,7 @@
 import os
 import requests
 import pandas as pd
+import json
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
@@ -243,11 +244,46 @@ def api_post(path, payload, timeout=1800):
         detail = r.text[:2000] if r is not None else str(e)
         raise requests.HTTPError(f"{e} | Response: {detail}", response=r) from e
 
+def _display_value(value):
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    if value is None:
+        return "—"
+    return str(value)
+
+def clean_display_df(frame):
+    df = frame.copy()
+    for col in df.columns:
+        if df[col].dtype == "object":
+            df[col] = df[col].map(_display_value)
+    return df
+
 def frame_results(results):
     df = pd.DataFrame(results or [])
-    if not df.empty:
-        df["heuristic_score"] = df["evaluation"].apply(lambda x: x.get("heuristic_score") if isinstance(x, dict) else None)
-        df["keyword_coverage"] = df["evaluation"].apply(lambda x: 100*x.get("keyword_coverage", 0) if isinstance(x, dict) else None)
+    if df.empty:
+        return df
+
+    evaluations = df.get(
+        "evaluation",
+        pd.Series([None] * len(df), index=df.index, dtype="object"),
+    )
+    rubric_evaluations = df.get(
+        "rubric_evaluation",
+        pd.Series([None] * len(df), index=df.index, dtype="object"),
+    )
+
+    df["heuristic_score"] = evaluations.apply(
+        lambda x: x.get("heuristic_score") if isinstance(x, dict) else None
+    )
+    df["keyword_coverage"] = evaluations.apply(
+        lambda x: 100 * x.get("keyword_coverage", 0) if isinstance(x, dict) else None
+    )
+    df["rubric_score"] = rubric_evaluations.apply(
+        lambda x: x.get("overall_score") if isinstance(x, dict) else None
+    )
+    df["rubric_decision"] = rubric_evaluations.apply(
+        lambda x: x.get("decision") if isinstance(x, dict) else None
+    )
     return df
 
 def model_name(row):
@@ -481,11 +517,19 @@ if page == "Catalog response lab":
         left, right = st.columns([1, 1])
         with left:
             st.markdown("#### Product grounding context")
-            st.write({
-                k: item.get(k)
-                for k in ["item_id", "domain_name", "item_name", "brand", "color", "product_type", "style", "material", "model_number", "country"]
+            metadata = [
+                {"Field": k.replace("_", " ").title(), "Value": item.get(k)}
+                for k in [
+                    "item_id", "domain_name", "item_name", "brand", "color",
+                    "product_type", "style", "material", "model_number", "country"
+                ]
                 if item.get(k) not in (None, "")
-            })
+            ]
+            st.dataframe(
+                clean_display_df(pd.DataFrame(metadata)),
+                use_container_width=True,
+                hide_index=True,
+            )
         with right:
             st.markdown("#### Catalog bullet points")
             bullets = item.get("bullet_points") or []
@@ -676,7 +720,7 @@ if page == "Catalog response lab":
 # ─────────────────────────────────────────────────────────────────────────────
 #  Catalog grounding
 # ─────────────────────────────────────────────────────────────────────────────
-if page == "Catalog grounding":
+elif page == "Catalog grounding":
     st.subheader("Catalog grounding")
     st.caption("Browse the uploaded Amazon item-list metadata used as product/catalog grounding data for this portfolio project. This is catalog metadata, not Amazon internal customer or support data.")
     c1, c2, c3 = st.columns([2, 1, 1])
@@ -717,7 +761,17 @@ if page == "Catalog grounding":
         left, right = st.columns([1, 1])
         with left:
             st.markdown("#### Product metadata")
-            st.json({k: item.get(k) for k in ["item_id", "domain_name", "item_name", "brand", "color", "product_type", "style", "material", "model_number", "country", "num_bullets"]})
+            metadata = [
+                {"Field": k.replace("_", " ").title(), "Value": item.get(k)}
+                for k in ["item_id", "domain_name", "item_name", "brand", "color",
+                          "product_type", "style", "material", "model_number", "country", "num_bullets"]
+                if item.get(k) not in (None, "")
+            ]
+            st.dataframe(
+                clean_display_df(pd.DataFrame(metadata)),
+                use_container_width=True,
+                hide_index=True,
+            )
         with right:
             st.markdown("#### Bullet points")
             bullets = item.get("bullet_points") or []
@@ -733,7 +787,7 @@ if page == "Catalog grounding":
 # ─────────────────────────────────────────────────────────────────────────────
 #  Overview
 # ─────────────────────────────────────────────────────────────────────────────
-if page == "Overview":
+elif page == "Overview":
     st.subheader("Quality overview")
     if not runs:
         st.info("No evaluation runs yet. Start an evaluation to populate the workspace.")
@@ -956,7 +1010,12 @@ elif page == "Human review":
                 st.markdown(f"<div class='panel'>{item.get('response','')}</div>", unsafe_allow_html=True)
             with right:
                 st.markdown("**Trace metadata**")
-                st.json({k: item.get(k) for k in ["case_id", "category", "provider", "model", "latency_ms", "usage", "evaluation"] if k in item})
+                trace_meta = pd.DataFrame([
+                    {"Field": k.replace("_", " ").title(), "Value": _display_value(item.get(k))}
+                    for k in ["case_id", "category", "provider", "model", "latency_ms", "usage", "evaluation"]
+                    if k in item
+                ])
+                st.dataframe(trace_meta, use_container_width=True, hide_index=True)
                 with st.form("review_form"):
                     rating = st.slider("Overall quality", 1, 5, 3)
                     label = st.selectbox("Review label", ["excellent", "acceptable", "poor", "unsafe", "needs_review"])
@@ -977,7 +1036,7 @@ elif page == "Human review":
     annotations = api_get("/annotations")
     if annotations:
         st.markdown("### Review history")
-        st.dataframe(pd.DataFrame(annotations), use_container_width=True, hide_index=True)
+        st.dataframe(clean_display_df(pd.DataFrame(annotations)), use_container_width=True, hide_index=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1081,7 +1140,7 @@ elif page == "Annotation operations":
     ledger = api_get("/ops/annotations") or []
     if ledger:
         ledger_df = pd.DataFrame(ledger)
-        st.dataframe(ledger_df, use_container_width=True, hide_index=True)
+        st.dataframe(clean_display_df(ledger_df), use_container_width=True, hide_index=True)
         st.download_button("Export auditable annotation ledger", ledger_df.to_csv(index=False), "annotation_ledger.csv", "text/csv")
     else:
         st.info("No annotations submitted yet.")
@@ -1089,7 +1148,7 @@ elif page == "Annotation operations":
     st.markdown("### Audit trail")
     audit_rows = api_get("/ops/audit") or []
     if audit_rows:
-        st.dataframe(pd.DataFrame(audit_rows), use_container_width=True, hide_index=True)
+        st.dataframe(clean_display_df(pd.DataFrame(audit_rows)), use_container_width=True, hide_index=True)
     else:
         st.caption("Submission events will appear here after the first annotation.")
 
@@ -1097,7 +1156,7 @@ elif page == "Annotation operations":
 # ─────────────────────────────────────────────────────────────────────────────
 #  Test cases (default)
 # ─────────────────────────────────────────────────────────────────────────────
-else:
+elif page == "Test cases":
     st.subheader("Evaluation dataset")
     st.markdown("<div class='subtle'>Curated benchmark cases used for repeatable model evaluation.</div>", unsafe_allow_html=True)
     data = api_get("/benchmark")
