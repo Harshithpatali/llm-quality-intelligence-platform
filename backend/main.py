@@ -30,7 +30,7 @@ def ready():
     except Exception as exc:
         logger.exception(
             "Readiness check failed; verify SUPABASE_URL and "
-            "SUPABASE_SERVICE_ROLE_KEY in the API environment"
+            "SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY in the API environment"
         )
         raise HTTPException(
             status_code=503,
