@@ -8,7 +8,8 @@ A portfolio-grade LLM evaluation workbench for reproducible model comparisons, r
 - Capture model/provider identity, response text, latency, token counts, and provider errors.
 - Compare evaluation runs and inspect individual response traces.
 - Record structured human labels and reviewer notes.
-- Persist runs and annotations in Supabase PostgreSQL.
+- Persist runs, annotations, and catalog grounding metadata in Supabase PostgreSQL.
+- Search 7,908 uploaded Amazon item-list metadata records across 29 marketplace domains.
 - Deploy the API as a Docker service on Render and the UI independently on Streamlit Community Cloud.
 - Run automated tests in GitHub Actions.
 
@@ -22,6 +23,8 @@ Render: Dockerized FastAPI ----> Groq API
        |                        OpenRouter API
        v
 Supabase PostgreSQL
+       ^
+Amazon item-list metadata (catalog grounding)
 ```
 
 The API is intentionally public and does not require a shared API token. This is appropriate for a demo, not a safe configuration for an unrestricted production service: public users can trigger paid provider calls. Add rate limits, quotas, and user authentication before exposing it broadly. Provider keys and the Supabase service-role key must remain in Render environment variables and must never be placed in Streamlit secrets or committed to Git.
@@ -139,4 +142,4 @@ The flagship workflow is a human-in-the-loop annotation operations demo, not an 
 3. Deploy/restart the API and frontend.
 4. Open **Annotation operations**, review the demonstration SOP, and annotate tasks. Use distinct annotator IDs only when distinct people actually perform the reviews.
 
-The task set is synthetic and is not Amazon data or an Amazon SOP. Reference behavior is separated into an explicit calibration view so live annotation is not pre-labeled. The reference behavior must not be represented as independently validated ground truth. The dashboard reports descriptive metrics; it does not infer quality improvements or claim statistical significance. Annotations preserve the SOP ID used at submission. The audit log records submission events; it is not a tamper-proof compliance ledger.
+The annotation task set is synthetic and is not Amazon data or an Amazon SOP. Separately, the project stores 7,908 records from the user-supplied `final_clean_amazon.jsonl` item-list metadata file as catalog grounding data. This is product/catalog metadata, not Amazon internal customer or support data. Reference behavior is separated into an explicit calibration view so live annotation is not pre-labeled. The reference behavior must not be represented as independently validated ground truth. The dashboard reports descriptive metrics; it does not infer quality improvements or claim statistical significance. Annotations preserve the SOP ID used at submission. The audit log records submission events; it is not a tamper-proof compliance ledger.
