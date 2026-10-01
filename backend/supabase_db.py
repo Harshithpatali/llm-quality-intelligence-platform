@@ -90,7 +90,7 @@ def list_active_sops() -> list[dict[str, Any]]:
 
 def submit_annotation(payload: dict[str, Any]) -> dict[str, Any]:
     client = get_client()
-    row = {**payload, "id": payload.get("id") or __import__("uuid").uuid4().hex}
+    row = {**payload, "id": payload.get("id") or str(__import__("uuid").uuid4())}
     result = client.table("annotation_submissions").insert(row).execute().data[0]
     client.table("annotation_audit_events").insert({
         "entity_type": "annotation", "entity_id": result["id"], "action": "submitted",
