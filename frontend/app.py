@@ -1,88 +1,131 @@
-import os, requests, pandas as pd, streamlit as st
-API=os.getenv("API_URL","http://localhost:8000")
-st.set_page_config(page_title="LLM Quality Intelligence",page_icon="🧪",layout="wide")
-st.title("🧪 LLM Quality Intelligence Platform")
-st.caption("Reproducible multi-model benchmarking • transparent diagnostics • human review")
+import os
+import requests
+import pandas as pd
+import streamlit as st
+
+st.set_page_config(page_title="LLM Quality Intelligence", page_icon="🧪", layout="wide")
+
+API = st.secrets.get("API_URL", os.getenv("API_URL", "http://localhost:8000")).rstrip("/")
+API_KEY = st.secrets.get("API_ACCESS_TOKEN", os.getenv("API_ACCESS_TOKEN", ""))
+
+
+def api_headers():
+    return {"X-API-Key": API_KEY} if API_KEY else {}
+
+
+def api_get(path):
+    try:
+        response = requests.get(API + path, headers=api_headers(), timeout=20)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as exc:
+        st.error(f"API request failed: {exc}")
+        return None
+
+
+st.title("LLM Quality Intelligence Platform")
+st.caption("Controlled model evaluation · traceable runs · human quality review")
+
 with st.sidebar:
     st.header("Benchmark controls")
-    providers=st.multiselect("Providers",["groq","openrouter"],default=["groq","openrouter"])
-    limit=st.slider("Benchmark cases",1,300,20)
-    st.caption("Keys are configured on the API server in .env.")
-    page=st.radio("Workspace",["Overview","Run benchmark","Human review","Dataset"])
-def get(path):
-    try:
-        r=requests.get(API+path,timeout=15); r.raise_for_status(); return r.json()
-    except Exception as e: st.error(f"API unavailable: {e}"); return None
-if page=="Overview":
-    health=get("/health")
-    if health: st.success("API connected")
-    runs=get("/runs")
-    if runs:
+    providers = st.multiselect("Providers", ["groq", "openrouter"], default=["groq", "openrouter"])
+    limit = st.slider("Benchmark cases", 1, 60, 20)
+    st.caption("Provider keys and Supabase credentials remain on the backend.")
+    page = st.radio("Workspace", ["Overview", "Run benchmark", "Human review", "Dataset"])
+
+if page == "Overview":
+    health = api_get("/health")
+    if health:
+        st.success("Backend is online")
+    runs = api_get("/runs")
+    if runs is not None:
         st.subheader("Recent benchmark runs")
-        st.dataframe(pd.DataFrame(runs),use_container_width=True,hide_index=True)
-        rid=st.selectbox("Inspect run", [x["run_id"] for x in runs])
-        if rid:
-            detail=get("/runs/"+rid)
+        if runs:
+            st.dataframe(pd.DataFrame(runs), use_container_width=True, hide_index=True)
+            selected = st.selectbox("Inspect run", [r["run_id"] for r in runs])
+            detail = api_get("/runs/" + selected)
             if detail:
-                df=pd.DataFrame(detail["results"])
-                ok=df[df.status=="success"] if not df.empty else df
-                a,b,c=st.columns(3)
-                a.metric("Responses",len(ok)); b.metric("Mean heuristic score",round(ok.evaluation.apply(lambda x:x["heuristic_score"]).mean(),1) if len(ok) else "—")
-                c.metric("Errors",int((df.status=="error").sum()) if not df.empty else 0)
-                if len(ok):
-                    df["heuristic_score"]=df.evaluation.apply(lambda x:x["heuristic_score"] if x else None)
-                    st.bar_chart(df.groupby(["provider","model"]).heuristic_score.mean())
-                    st.dataframe(df[["case_id","category","provider","model","status","latency_ms","heuristic_score","response"]],use_container_width=True)
-                    st.download_button("Download run CSV",df.to_csv(index=False),"benchmark_results.csv","text/csv")
-elif page=="Run benchmark":
-    st.subheader("Run a controlled evaluation")
-    st.info("Every selected model receives the same prompt set. API usage may incur provider charges.")
-    if st.button("Start benchmark",type="primary",disabled=not providers):
-        with st.spinner("Calling configured models…"):
-            try:
-                r=requests.post(API+"/benchmark/run",json={"providers":providers,"limit":limit},timeout=900)
-                r.raise_for_status(); data=r.json()
-                st.success(f"Run complete: {data['run_id']} — {data['cases']} cases × {data['models']} models")
-                df=pd.DataFrame(data["results"])
+                results = detail.get("results", [])
+                df = pd.DataFrame(results)
+                successful = df[df.status == "success"] if not df.empty else df
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Successful responses", len(successful))
+                scores = [x.get("heuristic_score") for x in successful.get("evaluation", []) if isinstance(x, dict) and x.get("heuristic_score") is not None] if not successful.empty else []
+                c2.metric("Mean heuristic score", round(sum(scores)/len(scores), 1) if scores else "—")
+                c3.metric("Failed responses", int((df.status == "error").sum()) if not df.empty else 0)
                 if not df.empty:
-                    df["heuristic_score"]=df.evaluation.apply(lambda x:x["heuristic_score"] if x else None)
-                    st.dataframe(df[["case_id","provider","model","status","latency_ms","heuristic_score","error"]],use_container_width=True)
-                    st.download_button("Download results",df.to_csv(index=False),"results.csv","text/csv")
-            except Exception as e: st.error(str(e))
-elif page=="Human review":
-    st.subheader("Human annotation queue")
-    runs=get("/runs") or []
+                    df["heuristic_score"] = df.evaluation.apply(lambda x: x.get("heuristic_score") if isinstance(x, dict) else None)
+                    st.bar_chart(df.groupby(["provider", "model"]).heuristic_score.mean())
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    st.download_button("Export run CSV", df.to_csv(index=False), "benchmark_run.csv", "text/csv")
+        else:
+            st.info("No runs yet. Start a benchmark to populate the workspace.")
+
+elif page == "Run benchmark":
+    st.subheader("Run a controlled evaluation")
+    st.warning("Each selected model receives the same cases. Provider usage may incur charges.")
+    if st.button("Start benchmark", type="primary", disabled=not providers):
+        with st.spinner("Running benchmark…"):
+            try:
+                response = requests.post(
+                    API + "/benchmark/run",
+                    headers=api_headers(),
+                    json={"providers": providers, "limit": limit},
+                    timeout=1800,
+                )
+                response.raise_for_status()
+                data = response.json()
+                st.success(f"Completed run {data['run_id']} · {data['cases']} cases × {data['models']} models")
+                df = pd.DataFrame(data["results"])
+                if not df.empty:
+                    df["heuristic_score"] = df.evaluation.apply(lambda x: x.get("heuristic_score") if isinstance(x, dict) else None)
+                    st.dataframe(df[["case_id", "provider", "model", "status", "latency_ms", "heuristic_score"]], use_container_width=True)
+                    st.download_button("Export results", df.to_csv(index=False), "benchmark_results.csv", "text/csv")
+            except requests.RequestException as exc:
+                st.error(f"Benchmark request failed: {exc}")
+
+elif page == "Human review":
+    st.subheader("Human annotation workspace")
+    runs = api_get("/runs")
     if runs:
-        rid=st.selectbox("Run", [r["run_id"] for r in runs])
-        detail=get("/runs/"+rid)
+        run_id = st.selectbox("Benchmark run", [r["run_id"] for r in runs])
+        detail = api_get("/runs/" + run_id)
         if detail:
-            rows=[x for x in detail["results"] if x["status"]=="success"]
-            if rows:
-                keys=[f"{x['case_id']} | {x['provider']} | {x['model']}" for x in rows]
-                chosen=st.selectbox("Response",range(len(rows)),format_func=lambda i:keys[i])
-                item=rows[chosen]
+            candidates = [r for r in detail.get("results", []) if r.get("status") == "success"]
+            if candidates:
+                selected = st.selectbox("Response under review", range(len(candidates)), format_func=lambda i: f"{candidates[i]['case_id']} · {candidates[i]['provider']} · {candidates[i]['model']}")
+                item = candidates[selected]
                 st.markdown("**Prompt**"); st.write(item["prompt"])
-                st.markdown("**Reference**"); st.write(item["reference_answer"])
+                st.markdown("**Reference answer**"); st.write(item["reference_answer"])
                 st.markdown("**Model response**"); st.write(item["response"])
-                with st.form("annotation"):
-                    rating=st.slider("Quality rating",1,5,3)
-                    label=st.selectbox("Label",["excellent","acceptable","poor","unsafe","needs_review"])
-                    reviewer=st.text_input("Reviewer","Harshith")
-                    notes=st.text_area("Notes")
-                    submitted=st.form_submit_button("Save annotation")
-                if submitted:
-                    payload={"run_id":rid,"case_id":item["case_id"],"provider":item["provider"],"model":item["model"],"rating":rating,"label":label,"notes":notes,"reviewer":reviewer}
+                with st.form("review_form"):
+                    rating = st.slider("Quality rating", 1, 5, 3)
+                    label = st.selectbox("Decision", ["excellent", "acceptable", "poor", "unsafe", "needs_review"])
+                    reviewer = st.text_input("Reviewer", "Harshith")
+                    notes = st.text_area("Evidence and review notes")
+                    submit = st.form_submit_button("Save review")
+                if submit:
+                    payload = {"run_id": run_id, "case_id": item["case_id"], "provider": item["provider"], "model": item["model"], "rating": rating, "label": label, "notes": notes, "reviewer": reviewer}
                     try:
-                        res=requests.post(API+"/annotations",json=payload,timeout=15); res.raise_for_status(); st.success("Annotation saved")
-                    except Exception as e: st.error(str(e))
-            else: st.info("No successful responses in this run.")
-    else: st.info("Run a benchmark first.")
-    anns=get("/annotations")
-    if anns: st.dataframe(pd.DataFrame(anns),use_container_width=True,hide_index=True)
+                        response = requests.post(API + "/annotations", headers=api_headers(), json=payload, timeout=20)
+                        response.raise_for_status()
+                        st.success("Review saved.")
+                    except requests.RequestException as exc:
+                        st.error(f"Could not save review: {exc}")
+            else:
+                st.info("This run has no successful model responses.")
+    elif runs == []:
+        st.info("No benchmark runs are available yet.")
+    annotations = api_get("/annotations")
+    if annotations:
+        st.subheader("Review history")
+        st.dataframe(pd.DataFrame(annotations), use_container_width=True, hide_index=True)
+
 else:
-    data=get("/benchmark")
+    st.subheader("Benchmark dataset")
+    data = api_get("/benchmark")
     if data:
-        st.metric("Benchmark examples",data["count"])
-        df=pd.DataFrame(data["cases"])
-        st.dataframe(df,use_container_width=True,hide_index=True)
-        st.download_button("Download dataset CSV",df.to_csv(index=False),"benchmark_dataset.csv","text/csv")
+        st.metric("Cases", data["count"])
+        df = pd.DataFrame(data["cases"])
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.download_button("Export benchmark CSV", df.to_csv(index=False), "benchmark_dataset.csv", "text/csv")
