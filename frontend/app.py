@@ -389,14 +389,15 @@ def score_tile(label, value, maxv=100, accent="#3978e8", hint=None):
         pct = 0
         shown = "—"
     hint_html = f"<div class='hint'>{hint}</div>" if hint else ""
-    return f"""
-    <div class='score-tile'>
-      <div class='lbl'>{label}</div>
-      <div class='val'>{shown}</div>
-      <div class='bar'><div class='fill' style='--w:{pct}%; width:{pct}%; background:linear-gradient(90deg,{accent},{_hex_to_rgba(accent,0.55)})'></div></div>
-      {hint_html}
-    </div>
-    """
+    # Return a single-line HTML string without indentation to prevent Streamlit markdown code-block rendering
+    return "".join([
+        f"<div class='score-tile'>",
+        f"<div class='lbl'>{label}</div>",
+        f"<div class='val'>{shown}</div>",
+        f"<div class='bar'><div class='fill' style='--w:{pct}%; width:{pct}%; background:linear-gradient(90deg,{accent},{_hex_to_rgba(accent,0.55)})'></div></div>",
+        hint_html,
+        f"</div>"
+    ])
 
 def badge(text, kind="neutral"):
     return f"<span class='badge {kind}'>{text}</span>"
@@ -554,166 +555,115 @@ if page == "Catalog response lab":
                     results = data.get("results", [])
                     good = [r for r in results if r.get("status") == "success" and isinstance(r.get("rubric_evaluation"), dict)]
 
-                    # Show every model result first. This makes provider failures and
-                    # successful responses visible without requiring the reviewer to infer them
-                    # from aggregate scorecards.
-                    st.markdown("### Model outputs")
-                    output_tabs = st.tabs([
-                        f'{r.get("provider")} · {r.get("model")}'
-                        for r in results
-                    ]) if results else []
-
-                    for tab, r in zip(output_tabs, results):
-                        with tab:
-                            status = r.get("status")
-                            if status != "success":
-                                st.error(
-                                    f'Model call failed: {r.get("error") or "Unknown provider error."}'
-                                )
-                                st.caption(
-                                    "This response was requested but could not be generated. "
-                                    "Check the provider API key, model availability, or Render environment variables."
-                                )
-                                continue
-
-                            st.markdown("**Model response**")
-                            st.info(r.get("response") or "(empty response)")
-
-                            meta_l, meta_r = st.columns(2)
-                            with meta_l:
-                                st.metric("Generation latency", f'{r.get("latency_ms","—")} ms')
-                            with meta_r:
-                                st.metric(
-                                    "Rubric status",
-                                    "Judged"
-                                    if isinstance(r.get("rubric_evaluation"), dict)
-                                    else "Judge failed",
-                                )
-
-                            ev = r.get("rubric_evaluation")
-                            if isinstance(ev, dict):
-                                m1,m2,m3,m4 = st.columns(4)
-                                m1.metric("Overall", f'{ev.get("overall_score","—")}/100')
-                                m2.metric("Decision", str(ev.get("decision","—")).upper())
-                                m3.metric(
-                                    "Critical failure",
-                                    "Yes" if ev.get("critical_failure") else "No",
-                                )
-                                m4.metric(
-                                    "Judge",
-                                    f'{ev.get("judge_provider","")} / {ev.get("judge_model","")}',
-                                )
-
-                                dims = ev.get("dimensions") or {}
-                                dim_df = pd.DataFrame([
-                                    {
-                                        "Dimension": name,
-                                        "Score": entry.get("score"),
-                                        "Rationale": entry.get("rationale",""),
-                                    }
-                                    for name, entry in dims.items()
-                                    if isinstance(entry, dict)
-                                ])
-                                if not dim_df.empty:
-                                    st.dataframe(
-                                        dim_df,
-                                        use_container_width=True,
-                                        hide_index=True,
-                                    )
-
-                                evidence = ev.get("evidence") or []
-                                unsupported = ev.get("unsupported_claims") or []
-                                if evidence:
-                                    st.markdown("**Evidence**")
-                                    for item_evidence in evidence:
-                                        st.write(f"• {item_evidence}")
-                                if unsupported:
-                                    st.markdown("**Unsupported claims detected**")
-                                    for claim in unsupported:
-                                        st.warning(claim)
-                                if ev.get("recommended_action"):
-                                    st.info(ev["recommended_action"])
-                            else:
-                                st.warning(
-                                    "The model response was generated, but the rubric judge did not return a usable evaluation."
-                                )
-
-                    # ── Rubric scorecard ─────────────────────────────────────
+                    # ── Scoreboard: tiles + gauges ───────────────────────────
                     if good:
                         st.markdown("### Rubric scorecard")
-                        overalls = [
-                            g["rubric_evaluation"].get("overall_score")
-                            for g in good
-                        ]
-                        numeric_overalls = [
-                            x for x in overalls
-                            if isinstance(x, (int, float))
-                        ]
-                        avg = (
-                            sum(numeric_overalls) / len(numeric_overalls)
-                            if numeric_overalls else 0
-                        )
-                        critical = sum(
-                            1
-                            for g in good
-                            if g["rubric_evaluation"].get("critical_failure")
-                        )
-                        decisions = [
-                            str(g["rubric_evaluation"].get("decision", "—")).upper()
-                            for g in good
-                        ]
-                        passed = sum(
-                            1 for d in decisions if d in ("PASS", "APPROVE", "ACCEPT")
-                        )
+                        # Overview tiles
+                        tiles = []
+                        overalls = [g["rubric_evaluation"].get("overall_score") for g in good]
+                        critical = sum(1 for g in good if g["rubric_evaluation"].get("critical_failure"))
+                        decisions = [str(g["rubric_evaluation"].get("decision", "—")).upper() for g in good]
+                        avg = sum(o for o in overalls if isinstance(o, (int, float))) / max(1, sum(1 for o in overalls if isinstance(o, (int, float))))
+                        tiles.append(score_tile("Mean overall", f"{avg:.1f}", maxv=100,
+                                                accent="#3978e8", hint=f"{len(good)} responses judged"))
+                        tiles.append(score_tile("Critical failures", critical, maxv=max(1, len(good)),
+                                                accent="#ef4444" if critical else "#10b981",
+                                                hint="Safety / policy blockers"))
+                        accept = sum(1 for d in decisions if d in ("ACCEPT", "PASS", "APPROVE"))
+                        tiles.append(score_tile("Accepted decisions", accept, maxv=max(1, len(good)),
+                                                accent="#10b981", hint=f"{accept}/{len(good)} models"))
+                        
+                        # Fix: join tiles and ensure no newlines exist to prevent markdown code-block rendering
+                        grid_html = "".join(tiles).replace("\n", "")
+                        st.markdown(f"<div class='score-grid'>{grid_html}</div>", unsafe_allow_html=True)
 
-                        a,b,c_metric,d_metric = st.columns(4)
-                        a.metric("Mean overall", f"{avg:.1f}/100")
-                        b.metric("Responses judged", len(good))
-                        c_metric.metric("Critical failures", critical)
-                        d_metric.metric("Pass / accept decisions", f"{passed}/{len(good)}")
+                        # Per-model gauges
+                        gauge_cols = st.columns(min(len(good), 4))
+                        for i, r in enumerate(good[:4]):
+                            ev = r["rubric_evaluation"]
+                            with gauge_cols[i]:
+                                st.plotly_chart(
+                                    gauge_score(ev.get("overall_score"),
+                                                title=f'{r.get("provider")} · {r.get("model")}'),
+                                    use_container_width=True,
+                                    config={"displayModeBar": False},
+                                )
 
+                        # Dataframe view (kept as before)
                         rows = []
-                        for r in results:
-                            ev = r.get("rubric_evaluation")
+                        for r in good:
+                            ev = r["rubric_evaluation"]
                             row = {
                                 "provider": r.get("provider"),
                                 "model": r.get("model"),
-                                "generation_status": r.get("status"),
-                                "rubric_status": (
-                                    "judged"
-                                    if isinstance(ev, dict)
-                                    else "not_judged"
-                                ),
-                                "overall_score": (
-                                    ev.get("overall_score")
-                                    if isinstance(ev, dict) else None
-                                ),
-                                "decision": (
-                                    ev.get("decision")
-                                    if isinstance(ev, dict) else None
-                                ),
+                                "decision": ev.get("decision"),
+                                "overall_score": ev.get("overall_score"),
+                                "critical_failure": ev.get("critical_failure"),
                             }
-                            if isinstance(ev, dict):
-                                for name, entry in (ev.get("dimensions") or {}).items():
-                                    row[name] = (
-                                        entry.get("score")
-                                        if isinstance(entry, dict) else None
-                                    )
+                            for name, entry in (ev.get("dimensions") or {}).items():
+                                row[name] = entry.get("score") if isinstance(entry, dict) else None
                             rows.append(row)
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-                        st.dataframe(
-                            pd.DataFrame(rows),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
+                    st.markdown("### Model responses and evidence")
+                    for idx, r in enumerate(results):
+                        label = f'{r.get("provider")} · {r.get("model")}'
+                        with st.expander(label, expanded=(idx == 0)):
+                            if r.get("status") != "success":
+                                st.error(r.get("error", "Model call failed."))
+                                continue
 
-                    st.markdown("### Run trace")
-                    st.json({
-                        "models_requested": data.get("models_requested"),
-                        "successful_responses": data.get("successful_responses"),
-                        "run_id": data.get("run_id"),
-                        "rubric_source": data.get("rubric_source"),
-                    })
+                            st.markdown("**Model response**")
+                            st.markdown(f"<div class='panel'>{r.get('response','')}</div>", unsafe_allow_html=True)
+
+                            ev = r.get("rubric_evaluation")
+                            if not isinstance(ev, dict):
+                                st.warning("Rubric scoring failed for this response.")
+                                continue
+                            m1, m2, m3, m4 = st.columns(4)
+                            m1.metric("Overall", f'{ev.get("overall_score","—")}/100')
+                            m2.metric("Decision", str(ev.get("decision", "—")).upper())
+                            m3.metric("Critical failure", "Yes" if ev.get("critical_failure") else "No")
+                            m4.metric("Judge", f'{ev.get("judge_provider","")} / {ev.get("judge_model","")}')
+
+                            st.markdown("**Dimension scores**")
+                            dims = ev.get("dimensions") or {}
+
+                            # Bar chart + radar side by side
+                            viz_l, viz_r = st.columns([1.15, 1])
+                            with viz_l:
+                                dbar = dimension_bars(dims)
+                                if dbar is not None:
+                                    st.plotly_chart(dbar, use_container_width=True, config={"displayModeBar": False})
+                            with viz_r:
+                                rdr = radar_dimensions(dims)
+                                if rdr is not None:
+                                    st.plotly_chart(rdr, use_container_width=True, config={"displayModeBar": False})
+
+                            dim_df = pd.DataFrame([
+                                {
+                                    "dimension": name,
+                                    "score": entry.get("score"),
+                                    "rationale": entry.get("rationale", ""),
+                                }
+                                for name, entry in dims.items()
+                                if isinstance(entry, dict)
+                            ])
+                            if not dim_df.empty:
+                                st.dataframe(dim_df, use_container_width=True, hide_index=True)
+
+                            evidence = ev.get("evidence") or []
+                            unsupported = ev.get("unsupported_claims") or []
+                            if evidence:
+                                st.markdown("**Evidence**")
+                                for x in evidence:
+                                    st.write(f"• {x}")
+                            if unsupported:
+                                st.markdown("**Unsupported claims detected**")
+                                for x in unsupported:
+                                    st.write(f"• {x}")
+                            if ev.get("recommended_action"):
+                                st.info(ev["recommended_action"])
 
                     st.caption(
                         "Rubric judgments are model-generated evaluation signals. They are not expert-validated ground truth; "
