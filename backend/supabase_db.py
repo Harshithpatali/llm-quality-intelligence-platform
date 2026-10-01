@@ -35,16 +35,13 @@ def _clean_env(name: str) -> str:
 
 def _database_config() -> tuple[str, str]:
     url = _clean_env("SUPABASE_URL")
-    key = _clean_env("SUPABASE_SERVICE_ROLE_KEY")
+    key = _clean_env("SUPABASE_SECRET_KEY") or _clean_env("SUPABASE_SERVICE_ROLE_KEY")
 
-    missing = [
-        name
-        for name, value in (
-            ("SUPABASE_URL", url),
-            ("SUPABASE_SERVICE_ROLE_KEY", key),
-        )
-        if not value
-    ]
+    missing = []
+    if not url:
+        missing.append("SUPABASE_URL")
+    if not key:
+        missing.append("SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY")
     if missing:
         raise RuntimeError(
             "Supabase configuration is missing: " + ", ".join(missing)
@@ -72,7 +69,10 @@ def get_client() -> Client:
 
 
 def init_db() -> None:
-    if _clean_env("SUPABASE_URL") and _clean_env("SUPABASE_SERVICE_ROLE_KEY"):
+    if _clean_env("SUPABASE_URL") and (
+        _clean_env("SUPABASE_SECRET_KEY")
+        or _clean_env("SUPABASE_SERVICE_ROLE_KEY")
+    ):
         get_client()
 
 
