@@ -26,11 +26,16 @@ def health():
 @app.get("/ready")
 def ready():
     try:
-        db.get_client().table("llm_benchmark_runs").select("run_id").limit(1).execute()
-        return {"status": "ready", "database": "connected"}
+        return {"status": "ready", "database": db.database_status()}
     except Exception as exc:
-        logger.exception("Readiness check failed")
-        raise HTTPException(status_code=503, detail="Database is not ready") from exc
+        logger.exception(
+            "Readiness check failed; verify SUPABASE_URL and "
+            "SUPABASE_SERVICE_ROLE_KEY in the API environment"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Database is not ready. Verify the API Supabase configuration and schema.",
+        ) from exc
 
 @app.get("/benchmark")
 def benchmark():
@@ -152,10 +157,14 @@ class OperationalAnnotationRequest(BaseModel):
 
 @app.get("/ops/tasks")
 def operational_tasks(category: str | None = None):
-    try: return db.list_annotation_tasks(category)
+    try:
+        return db.list_annotation_tasks(category)
     except Exception as exc:
         logger.exception("Could not list annotation tasks")
-        raise HTTPException(status_code=503, detail="Apply supabase/operations_workflow.sql and check database configuration") from exc
+        raise HTTPException(
+            status_code=503,
+            detail="Could not list annotation tasks. Verify the API Supabase project, key, and workflow schema.",
+        ) from exc
 
 @app.get("/ops/sops/active")
 def active_sops():
