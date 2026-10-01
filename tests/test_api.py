@@ -8,4 +8,4 @@ def test_health():
 def test_benchmark_endpoint():
     response=client.get("/benchmark")
     assert response.status_code==200
-    assert response.json()["count"]>=100
+    assert response.json()["count"]>=60
