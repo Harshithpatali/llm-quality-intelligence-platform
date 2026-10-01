@@ -6,7 +6,6 @@ import streamlit as st
 st.set_page_config(page_title="LLM Quality Intelligence", page_icon="◈", layout="wide")
 
 API = st.secrets.get("API_URL", os.getenv("API_URL", "http://localhost:8000")).rstrip("/")
-API_KEY = st.secrets.get("API_ACCESS_TOKEN", os.getenv("API_ACCESS_TOKEN", ""))
 
 st.markdown("""
 <style>
@@ -30,7 +29,7 @@ div.stButton>button[kind="primary"] {border-radius:9px;}
 """, unsafe_allow_html=True)
 
 def headers():
-    return {"X-API-Key": API_KEY} if API_KEY else {}
+    return {}
 
 def api_get(path):
     try:
@@ -58,7 +57,7 @@ st.markdown("<div class='subtle'>Compare model behavior, inspect response traces
 with st.sidebar:
     st.markdown("## ◈ Quality Lab")
     st.caption("LLM evaluation · review · analytics")
-    page=st.radio("WORKSPACE",["Annotation operations","Overview","Compare evaluations","Run evaluation","Human review","Test cases"],label_visibility="visible")
+    page=st.radio("WORKSPACE",["Annotation operations","Calibration","Overview","Compare evaluations","Run evaluation","Human review","Test cases"],label_visibility="visible")
     st.divider()
     st.markdown("**Run configuration**")
     providers=st.multiselect("Providers",["groq","openrouter"],default=["groq","openrouter"])
@@ -158,6 +157,38 @@ elif page=="Run evaluation":
                 st.download_button("Download results",df.to_csv(index=False),"evaluation.csv","text/csv")
             except requests.RequestException as e: st.error(f"Evaluation failed: {e}")
 
+elif page=="Calibration":
+    st.subheader("Calibration reference")
+    st.caption("Use this view only for reviewer calibration. Do not use the reference behavior as a shortcut during live annotation.")
+    tasks=api_get("/ops/tasks") or []
+    if not tasks:
+        st.warning("No annotation tasks available.")
+    else:
+        task_ids=[t["task_id"] for t in tasks]
+        task_id=st.selectbox(
+            "Calibration task",
+            task_ids,
+            format_func=lambda x: next(
+                (f'{t["task_id"]} · {t["category"]} · {t["difficulty"]}'
+                 for t in tasks if t["task_id"]==x),
+                x,
+            ),
+        )
+        task=next(t for t in tasks if t["task_id"]==task_id)
+        left,right=st.columns([1,1])
+        with left:
+            st.markdown("#### Customer query")
+            st.info(task["query"])
+            st.markdown("#### Supplied context / policy")
+            st.write(task["context"])
+            st.markdown("#### AI response")
+            st.write(task["model_response"])
+        with right:
+            st.markdown("#### Project calibration reference")
+            st.success(task["expected_behavior"])
+            st.caption("Synthetic project-created reference behavior; it is not externally validated ground truth or an Amazon policy.")
+
+
 elif page=="Human review":
     st.subheader("Human-in-the-loop review")
     st.markdown("<div class='subtle'>Inspect the full prompt and response, record a structured judgment, and preserve the reviewed example.</div>",unsafe_allow_html=True)
@@ -240,8 +271,7 @@ elif page=="Annotation operations":
             st.write(task["context"])
             st.markdown("#### AI response to annotate")
             st.write(task["model_response"])
-            with st.expander("Reference behavior (for calibration; avoid using as a shortcut)"):
-                st.write(task["expected_behavior"])
+            st.caption("Reference behavior is withheld during live annotation to reduce label leakage and preserve the integrity of reviewer judgments.")
         with right:
             st.markdown("#### Apply the SOP")
             st.caption("Pass = no material issue · Minor = limited issue · Major = material defect · N/A = not assessable")
