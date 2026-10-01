@@ -1,31 +1,54 @@
 # LLM Quality Intelligence Platform
 
-A controlled LLM response-quality workbench built around reproducible evaluation, provider comparisons, traceable runs, and human review. Groq and OpenRouter are accessed only by the FastAPI backend. Supabase PostgreSQL stores benchmark runs and annotations.
+A portfolio-grade LLM evaluation workbench for reproducible model comparisons, response-level diagnostics, trace inspection, and human review. Groq and OpenRouter are called by the FastAPI backend; Supabase stores runs and annotations.
 
-## What it does
-- Runs the same curated benchmark cases across selected models.
-- Captures response text, latency, token usage when available, and provider errors.
-- Computes transparent reference-overlap diagnostics (not a semantic truth score).
-- Stores runs and human annotations in Supabase.
-- Provides a Streamlit review and analytics workspace.
-- Uses an API access token between Streamlit and FastAPI; provider and database credentials remain server-side.
+## Capabilities
+
+- Execute a shared benchmark dataset against configured models.
+- Capture model/provider identity, response text, latency, token counts, and provider errors.
+- Compare evaluation runs and inspect individual response traces.
+- Record structured human labels and reviewer notes.
+- Persist runs and annotations in Supabase PostgreSQL.
+- Deploy the API as a Docker service on Render and the UI independently on Streamlit Community Cloud.
+- Run automated tests in GitHub Actions.
 
 ## Architecture
-```
+
+```text
 Streamlit Community Cloud
-       | HTTPS + API token
+       | HTTPS (public API)
        v
-Render FastAPI service ----> Groq API
-       |                    OpenRouter API
+Render: Dockerized FastAPI ----> Groq API
+       |                        OpenRouter API
        v
 Supabase PostgreSQL
 ```
 
-## Dataset
-`data/benchmark.jsonl` contains 60 purpose-built synthetic cases across multiple task categories. It is not real customer data and is not an externally validated gold standard.
+The API is intentionally public and does not require a shared API token. This is appropriate for a demo, not a safe configuration for an unrestricted production service: public users can trigger paid provider calls. Add rate limits, quotas, and user authentication before exposing it broadly. Provider keys and the Supabase service-role key must remain in Render environment variables and must never be placed in Streamlit secrets or committed to Git.
+
+## Repository layout
+
+```text
+backend/                 FastAPI routes, providers, evaluation, persistence
+frontend/                Streamlit application
+data/                    Versioned benchmark dataset
+supabase/                Database schema
+tests/                   Unit and API tests
+.github/workflows/       Continuous integration
+Dockerfile               Render backend image
+render.yaml              Optional Render Blueprint (manual Docker setup does not need it)
+requirements.txt         Python dependencies
+```
+
+## Dataset and scoring caveat
+
+`data/benchmark.jsonl` contains 60 synthetic benchmark cases. It is a starter portfolio dataset, not real customer data or an externally validated gold standard.
+
+The current deterministic evaluator reports reference-term overlap and response-length diagnostics. These metrics are not semantic correctness, factuality, relevance, or safety judgments. A fluent or keyword-rich response can still be wrong. Human review is included so benchmark owners can inspect evidence and label failures.
 
 ## Local development
-Python 3.11 recommended.
+
+Python 3.11 is recommended.
 
 ```bash
 git clone https://github.com/Harshithpatali/llm-quality-intelligence-platform.git
@@ -34,9 +57,10 @@ python -m venv .venv
 # Windows: .venv\\Scripts\\activate
 # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env
 ```
 
-Copy `.env.example` to `.env`, fill in credentials, and run:
+Set provider and Supabase credentials in `.env`, then run in separate terminals:
 
 ```bash
 uvicorn backend.main:app --reload --port 8000
@@ -45,39 +69,60 @@ streamlit run frontend/app.py
 
 API docs: http://localhost:8000/docs
 
-## Deploy
-- **Backend:** Render blueprint in `render.yaml`.
-- **Frontend:** Streamlit Community Cloud; main file path `frontend/app.py`.
-- Follow [STREAMLIT_DEPLOY.md](STREAMLIT_DEPLOY.md) for the exact environment variables and secrets.
+## Tests and CI
 
-Required Render secrets:
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY` (backend only; never expose in Streamlit)
-- `API_ACCESS_TOKEN` (generate a long random value)
-- `GROQ_API_KEY`
-- `OPENROUTER_API_KEY`
-
-Streamlit secrets:
-- `API_URL` = Render service URL
-- `API_ACCESS_TOKEN` = same token configured on Render
-
-The Supabase schema is in `supabase/schema.sql`. The project tables were provisioned in the connected Supabase project; the SQL file documents the schema for reproducibility. RLS is enabled. The backend uses the service-role key, which must be stored only as a Render secret.
-
-## API
-- `GET /`, `GET /health`: public service metadata and liveness.
-- `GET /ready`: checks Supabase connectivity.
-- `GET /benchmark`: dataset (requires API token).
-- `POST /benchmark/run`: run selected providers and cases (requires token).
-- `GET /runs`, `GET /runs/{run_id}`: run history (requires token).
-- `POST /annotations`, `GET /annotations`: human reviews (requires token).
-
-## Evaluation limitations
-The current score combines reference-term coverage and a response-length sanity heuristic. It is useful for diagnostics, not semantic correctness, relevance, or safety certification. Fluent or keyword-rich responses can still be wrong. Production model decisions should include task-specific expert rubrics, blinded human ratings, inter-annotator agreement, confidence intervals, and safety review.
-
-## Tests
 ```bash
 pytest -q
+python -m compileall -q backend frontend
 ```
 
-## Production hardening roadmap
-For a multi-user production launch, add user identity/roles, per-user audit trails, request rate limits, asynchronous benchmark jobs, retry/backoff and provider budgets, retention policies, observability, and load tests. The included Render free plan can sleep when idle.
+GitHub Actions runs the test suite on pushes and pull requests. The tests are designed not to call paid model APIs or require Supabase credentials.
+
+## Deployment
+
+### Render backend — manual Docker setup
+
+1. Create **New → Web Service** and connect this repository.
+2. Choose **Docker** runtime.
+3. Set Dockerfile path to `./Dockerfile` and Docker context to `.`.
+4. Set health check path to `/health`.
+5. Configure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`, and `OPENROUTER_API_KEY`.
+6. Deploy the service.
+
+No `API_ACCESS_TOKEN` is needed. The backend listens on Render's injected `PORT`.
+
+### Streamlit Community Cloud frontend
+
+Deploy `frontend/app.py` from this repository. Set the Streamlit secret:
+
+```toml
+API_URL = "https://YOUR-RENDER-SERVICE.onrender.com"
+```
+
+The frontend calls the public API; it does not connect directly to Supabase.
+
+### Database
+
+The reproducible schema is in `supabase/schema.sql`. RLS is enabled; the backend uses the service-role key, which bypasses RLS and must remain server-side.
+
+## API
+
+- `GET /`, `GET /health`: service metadata and liveness.
+- `GET /ready`: Supabase connectivity check.
+- `GET /benchmark`: benchmark cases.
+- `POST /benchmark/run`: execute a benchmark.
+- `GET /runs`, `GET /runs/{run_id}`: run history and details.
+- `POST /annotations`, `GET /annotations`: human review records.
+
+All endpoints are public in this demo deployment.
+
+## Known limitations and next hardening steps
+
+- Benchmark execution is synchronous; long runs can exceed request timeouts.
+- No public-API rate limit or spend quota is implemented yet.
+- No user identity, reviewer roles, or per-user audit trail.
+- No provider retry/backoff or asynchronous job queue.
+- The heuristic evaluator is not validated against expert labels.
+- Render free services may sleep when idle.
+
+Before treating this as a production service, implement rate limiting and provider budgets, background jobs, robust retry handling, identity/authorization, observability, retention controls, and evaluation calibration against human judgments.
