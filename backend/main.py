@@ -201,3 +201,46 @@ def audit_log():
     except Exception as exc:
         logger.exception("Could not retrieve audit events")
         raise HTTPException(status_code=503, detail="Could not retrieve audit events") from exc
+
+
+class SOPDraftRequest(BaseModel):
+    sop_name: str = Field(min_length=1, max_length=120)
+    content_json: dict
+    change_summary: str = Field(min_length=1, max_length=2000)
+    created_by: str = Field(min_length=1, max_length=120)
+
+class SOPReviewRequest(BaseModel):
+    reviewer: str = Field(min_length=1, max_length=120)
+
+@app.get("/ops/sops")
+def list_sops():
+    try: return db.list_sops()
+    except Exception as exc:
+        logger.exception("Could not list SOP versions")
+        raise HTTPException(status_code=503, detail="Could not list SOP versions") from exc
+
+@app.post("/ops/sops", status_code=201)
+def create_sop(req: SOPDraftRequest):
+    try: return db.create_sop_draft(req.sop_name, req.content_json, req.change_summary, req.created_by)
+    except Exception as exc:
+        logger.exception("Could not create SOP draft")
+        raise HTTPException(status_code=503, detail="Could not create SOP draft") from exc
+
+@app.post("/ops/sops/{sop_id}/approve")
+def approve_sop(sop_id: str, req: SOPReviewRequest):
+    try: row = db.review_sop(sop_id, req.reviewer, True)
+    except Exception as exc:
+        logger.exception("Could not approve SOP")
+        raise HTTPException(status_code=503, detail="Could not approve SOP") from exc
+    if not row: raise HTTPException(status_code=409, detail="Only draft SOPs can be approved")
+    db.record_audit_event("sop",sop_id,"approved",req.reviewer,{"sop_name":row["sop_name"],"version":row["version"]})
+    return row
+
+@app.post("/ops/sops/{sop_id}/activate")
+def activate_sop(sop_id: str, req: SOPReviewRequest):
+    try: row = db.activate_sop(sop_id, req.reviewer)
+    except Exception as exc:
+        logger.exception("Could not activate SOP")
+        raise HTTPException(status_code=503, detail="Could not activate SOP") from exc
+    if not row: raise HTTPException(status_code=409, detail="Only approved SOPs can be activated")
+    return row
