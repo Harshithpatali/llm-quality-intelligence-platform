@@ -19,4 +19,4 @@ services:
       - key: GROQ_MODEL
         value: openai/gpt-oss-120b
       - key: OPENROUTER_MODELS
-        value: openai/gpt-oss-120b
+        value: openai/gpt-oss-120b,deepseek/deepseek-v4-flash-0731
