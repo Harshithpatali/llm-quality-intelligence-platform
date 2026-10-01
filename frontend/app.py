@@ -73,7 +73,7 @@ runs=api_get("/runs")
 runs=runs or []
 run_options=[x.get("run_id") for x in runs if x.get("run_id")]
 
-elif page=="Catalog grounding":
+if page=="Catalog grounding":
     st.subheader("Catalog grounding")
     st.caption("Browse the uploaded Amazon item-list metadata used as product/catalog grounding data for this portfolio project. This is catalog metadata, not Amazon internal customer or support data.")
     c1,c2,c3=st.columns([2,1,1])
