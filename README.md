@@ -21,10 +21,9 @@ Streamlit Community Cloud
        v
 Render: Dockerized FastAPI ----> Groq API
        |                        OpenRouter API
+       |
        v
-Supabase PostgreSQL
-       ^
-Amazon item-list metadata (catalog grounding)
+Supabase PostgreSQL <---- Amazon item-list metadata
 ```
 
 The API is intentionally public and does not require a shared API token. This is appropriate for a demo, not a safe configuration for an unrestricted production service: public users can trigger paid provider calls. Add rate limits, quotas, and user authentication before exposing it broadly. Provider keys and the Supabase service-role key must remain in Render environment variables and must never be placed in Streamlit secrets or committed to Git.
@@ -106,12 +105,17 @@ The frontend calls the public API; it does not connect directly to Supabase.
 
 ### Database
 
-The reproducible schema is in `supabase/schema.sql`. RLS is enabled; the backend uses the service-role key, which bypasses RLS and must remain server-side.
+The reproducible schema is in `supabase/schema.sql`, with the annotation workflow in `supabase/operations_workflow.sql` and the catalog grounding table in `supabase/amazon_itemlist_metadata.sql`.
+
+The catalog metadata was loaded into `public.amazon_itemlist_metadata` as 7,908 rows using a composite key of `item_id + domain_name`, preserving duplicate item IDs that occur across marketplaces. The raw 10 MB JSONL upload is intentionally not committed to GitHub; `scripts/load_amazon_itemlist.py` provides a repeatable local ingestion path when the source file is available.
+
+RLS is enabled on the catalog table. It has no anonymous read policy, so the Streamlit client accesses it only through the FastAPI backend. Backend database credentials remain server-side.
 
 ## API
 
 - `GET /`, `GET /health`: service metadata and liveness.
-- `GET /ready`: Supabase connectivity check.
+- `GET /ready`: Supabase connectivity check, including the catalog grounding table.
+- `GET /ops/products`: catalog metadata search for product grounding and inspection.
 - `GET /benchmark`: benchmark cases.
 - `POST /benchmark/run`: execute a benchmark.
 - `GET /runs`, `GET /runs/{run_id}`: run history and details.
