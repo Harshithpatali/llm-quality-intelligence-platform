@@ -86,7 +86,7 @@ GitHub Actions runs the test suite on pushes and pull requests. The tests are de
 2. Choose **Docker** runtime.
 3. Set Dockerfile path to `./Dockerfile` and Docker context to `.`.
 4. Set health check path to `/health`.
-5. Configure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`, and `OPENROUTER_API_KEY`.
+5. Configure `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (or the legacy `SUPABASE_SERVICE_ROLE_KEY`), `GROQ_API_KEY`, and `OPENROUTER_API_KEY`.
 6. Deploy the service.
 
 No `API_ACCESS_TOKEN` is needed. The backend listens on Render's injected `PORT`.
@@ -139,4 +139,4 @@ The flagship workflow is a human-in-the-loop annotation operations demo, not an 
 3. Deploy/restart the API and frontend.
 4. Open **Annotation operations**, review the demonstration SOP, and annotate tasks. Use distinct annotator IDs only when distinct people actually perform the reviews.
 
-The task set is synthetic and is not Amazon data or an Amazon SOP. Reference behavior is provided for calibration and must not be represented as independently validated ground truth. The dashboard reports descriptive metrics; it does not infer quality improvements or claim statistical significance. Annotations preserve the SOP ID used at submission. The audit log records submission events; it is not a tamper-proof compliance ledger.
+The task set is synthetic and is not Amazon data or an Amazon SOP. Reference behavior is separated into an explicit calibration view so live annotation is not pre-labeled. The reference behavior must not be represented as independently validated ground truth. The dashboard reports descriptive metrics; it does not infer quality improvements or claim statistical significance. Annotations preserve the SOP ID used at submission. The audit log records submission events; it is not a tamper-proof compliance ledger.
