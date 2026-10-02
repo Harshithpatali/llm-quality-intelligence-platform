@@ -523,7 +523,7 @@ def evaluation_job(job_id: str):
     return payload
 
 
-@app.get("/ops/products")
+@app.get("/ops/products", dependencies=[Depends(require_api_key)])
 def products(
     q: str | None = None,
     brand: str | None = None,
