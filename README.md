@@ -27,7 +27,7 @@ Render: Dockerized FastAPI ----> Groq API
 Supabase PostgreSQL <---- Amazon item-list metadata
 ```
 
-The API is intentionally public and does not require a shared API token. This is appropriate for a demo, not a safe configuration for an unrestricted production service: public users can trigger paid provider calls. Add rate limits, quotas, and user authentication before exposing it broadly. Provider keys and the Supabase service-role key must remain in Render environment variables and must never be placed in Streamlit secrets or committed to Git.
+By default the demo API can run without an API token, but `API_ACCESS_TOKEN` can now protect application and paid-provider routes. A lightweight single-instance rate limit also protects expensive POST routes. Provider keys and the Supabase secret/service-role key must remain in Render environment variables and must never be placed in Streamlit secrets or committed to Git.
 
 ## Repository layout
 
@@ -92,7 +92,7 @@ GitHub Actions runs the test suite on pushes and pull requests. The tests are de
 5. Configure `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (or the legacy `SUPABASE_SERVICE_ROLE_KEY`), `GROQ_API_KEY`, and `OPENROUTER_API_KEY`.
 6. Deploy the service.
 
-No `API_ACCESS_TOKEN` is needed. The backend listens on Render's injected `PORT`.
+`API_ACCESS_TOKEN` is optional. When set, use the same token in Streamlit secrets. The backend listens on Render's injected `PORT`.
 
 ### Streamlit Community Cloud frontend
 
@@ -102,7 +102,7 @@ Deploy `frontend/app.py` from this repository. Set the Streamlit secret:
 API_URL = "https://YOUR-RENDER-SERVICE.onrender.com"
 ```
 
-The frontend calls the public API; it does not connect directly to Supabase.
+The frontend calls FastAPI; it does not connect directly to Supabase. When API protection is enabled, the frontend sends `X-API-Key` from Streamlit secrets.
 
 ### Database
 
@@ -152,7 +152,7 @@ The annotation task set is synthetic and is not Amazon data or an Amazon SOP. Se
 
 ### Multi-model evaluation
 
-The default evaluation configuration runs three model calls when both providers are selected: the configured Groq model plus two OpenRouter models (`openai/gpt-oss-120b` and `deepseek/deepseek-v4-flash-0731`). OpenRouter model slugs should be kept in a comma-separated `OPENROUTER_MODELS` environment variable.
+The current default generation configuration produces three distinct model identities when both providers are selected: Groq GPT-OSS 120B, Groq GPT-OSS 20B, and OpenRouter DeepSeek V4 Flash 0731. The independent rubric judge is configured separately.
 
 
 ## Catalog-grounded response evaluation
@@ -184,7 +184,7 @@ Persisted evaluation run → human review / annotation
 
 The evaluator treats the uploaded item-list metadata as product grounding context. It does not represent the dataset as Amazon internal customer, support, policy, or proprietary operational data. When a requested attribute is absent from the catalog record, the generation prompt explicitly instructs the model to say that the supplied metadata does not specify it rather than inventing a value.
 
-The rubric is stored as structured JSON when a saved active rubric is selected; otherwise the workflow uses a built-in demonstration rubric. The rubric judge is configured with JUDGE_PROVIDER and JUDGE_MODEL. With the current default generation configuration, selecting both providers produces the configured Groq model plus the two OpenRouter models, while the judge is run separately so the model-generation traces remain comparable.
+The rubric is stored as structured JSON when a saved active rubric is selected; otherwise the workflow uses a built-in demonstration rubric. The rubric judge is configured with JUDGE_PROVIDER and JUDGE_MODEL. With the current default generation configuration, selecting both providers produces two Groq generations plus one OpenRouter generation, while the judge runs separately so generator traces remain comparable.
 
 This design is intentionally different from a generic LLM leaderboard. The product search creates a realistic grounding problem, the three generation traces create comparable model behavior, and the rubric layer turns each trace into auditable quality evidence before a human reviewer makes the final judgment.
 
