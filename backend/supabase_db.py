@@ -375,32 +375,44 @@ def list_product_metadata(
     domain_name: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Search the project catalog grounding dataset without exposing backend credentials."""
+    """Search catalog metadata with ranked PostgreSQL full-text search when available."""
     client = get_client()
     safe_limit = max(1, min(int(limit), 100))
-    query = (
-        client.table(TABLE_PRODUCT_METADATA)
-        .select(
-            "item_id,domain_name,item_name,brand,color,product_type,style,material,"
-            "model_number,bullet_points,bullet_points_text,country,num_bullets"
-        )
-        .order("item_name")
-        .limit(safe_limit)
-    )
-    if q and q.strip():
-        term = q.strip().replace("%", "\\%").replace(",", "\\,")
-        query = query.or_(
-            "item_name.ilike.%{0}%,brand.ilike.%{0}%,product_type.ilike.%{0}%,bullet_points_text.ilike.%{0}%".format(
-                term
+    try:
+        response = client.rpc(
+            "search_amazon_itemlist",
+            {
+                "p_query": q.strip() if q else None,
+                "p_brand": brand.strip() if brand else None,
+                "p_product_type": product_type.strip() if product_type else None,
+                "p_domain_name": domain_name.strip() if domain_name else None,
+                "p_limit": safe_limit,
+            },
+        ).execute()
+        return response.data or []
+    except Exception:
+        query = (
+            client.table(TABLE_PRODUCT_METADATA)
+            .select(
+                "item_id,domain_name,item_name,brand,color,product_type,style,material,"
+                "model_number,bullet_points,bullet_points_text,country,num_bullets"
             )
+            .order("item_name")
+            .limit(safe_limit)
         )
-    if brand and brand.strip():
-        query = query.eq("brand", brand.strip())
-    if product_type and product_type.strip():
-        query = query.eq("product_type", product_type.strip())
-    if domain_name and domain_name.strip():
-        query = query.eq("domain_name", domain_name.strip())
-    return query.execute().data or []
+        if q and q.strip():
+            term = q.strip().replace("%", "\\%").replace(",", "\\,")
+            query = query.or_(
+                "item_name.ilike.%{0}%,brand.ilike.%{0}%,product_type.ilike.%{0}%,"
+                "bullet_points_text.ilike.%{0}%".format(term)
+            )
+        if brand and brand.strip():
+            query = query.eq("brand", brand.strip())
+        if product_type and product_type.strip():
+            query = query.eq("product_type", product_type.strip())
+        if domain_name and domain_name.strip():
+            query = query.eq("domain_name", domain_name.strip())
+        return query.execute().data or []
 
 
 def list_active_policies() -> list[dict[str, Any]]:
@@ -487,6 +499,7 @@ def update_evaluation_job(
 def save_evaluation_traces(run_id: str, traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not traces:
         return []
+
     rows = []
     for trace in traces:
         rows.append(
@@ -512,6 +525,8 @@ def save_evaluation_traces(run_id: str, traces: list[dict[str, Any]]) -> list[di
                 "policy_id": trace.get("policy_id"),
                 "rubric_id": trace.get("rubric_id"),
                 "rubric_version": trace.get("rubric_version"),
+                "product_metadata": trace.get("product_metadata"),
+                "policy_context": trace.get("policy_context"),
                 "automated_evaluation": trace.get("rubric_evaluation"),
                 "review_status": trace.get("review_status", "unreviewed"),
             }
