@@ -587,10 +587,7 @@ if page == "Review queue":
             st.info(trace.get("user_query", ""))
 
             st.markdown("#### Model response")
-            st.markdown(
-                f"<div class='panel'>{trace.get('response','')}</div>",
-                unsafe_allow_html=True,
-            )
+            st.info(trace.get("response") or "(empty response)")
 
             if review["status"] in {"queued", "in_review"}:
                 sops = api_get("/ops/sops/active") or []
@@ -1094,6 +1091,12 @@ elif page == "Catalog response lab":
 
                 progress.empty()
 
+                if result is None:
+                    st.error(
+                        "Evaluation timed out waiting for the background job. "
+                        "The job may still be running; check Review queue or retry later."
+                    )
+
                 if result:
                     st.success(
                         f'Catalog evaluation completed · '
@@ -1494,7 +1497,8 @@ elif page == "Calibration":
 #  Human review
 # ─────────────────────────────────────────────────────────────────────────────
 elif page == "Human review":
-    st.subheader("Human-in-the-loop review")
+    st.subheader("Legacy benchmark review")
+    st.caption("This page is retained for the original benchmark-review flow. Use Review queue for the governed blind-review workflow.")
     st.markdown("<div class='subtle'>Inspect the full prompt and response, record a structured judgment, and preserve the reviewed example.</div>", unsafe_allow_html=True)
     st.markdown("#### Review workflow")
     x1, x2, x3 = st.columns(3)
@@ -1515,11 +1519,11 @@ elif page == "Human review":
             left, right = st.columns([1.1, 1])
             with left:
                 st.markdown("**Prompt / user input**")
-                st.markdown(f"<div class='panel'>{item.get('prompt','')}</div>", unsafe_allow_html=True)
+                st.code(item.get("prompt", ""), language="text")
                 st.markdown("**Reference answer**")
                 st.info(item.get("reference_answer", ""))
                 st.markdown("**Model output**")
-                st.markdown(f"<div class='panel'>{item.get('response','')}</div>", unsafe_allow_html=True)
+                st.info(item.get("response") or "(empty response)")
             with right:
                 st.markdown("**Trace metadata**")
                 trace_meta = pd.DataFrame([
