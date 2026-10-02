@@ -403,6 +403,281 @@ def list_product_metadata(
     return query.execute().data or []
 
 
+def list_active_policies() -> list[dict[str, Any]]:
+    return (
+        get_client()
+        .table("quality_policies")
+        .select("*")
+        .eq("status", "active")
+        .order("policy_name")
+        .order("version", desc=True)
+        .limit(100)
+        .execute()
+        .data
+        or []
+    )
+
+
+def get_policy(policy_id: str) -> dict[str, Any] | None:
+    response = (
+        get_client()
+        .table("quality_policies")
+        .select("*")
+        .eq("policy_id", policy_id)
+        .limit(1)
+        .execute()
+    )
+    return response.data[0] if response.data else None
+
+
+def create_evaluation_job(
+    job_id: str,
+    job_type: str,
+    request_json: dict[str, Any],
+) -> dict[str, Any]:
+    row = {
+        "job_id": job_id,
+        "job_type": job_type,
+        "status": "queued",
+        "request_json": request_json,
+    }
+    return get_client().table("evaluation_jobs").insert(row).execute().data[0]
+
+
+def get_evaluation_job(job_id: str) -> dict[str, Any] | None:
+    response = (
+        get_client()
+        .table("evaluation_jobs")
+        .select("*")
+        .eq("job_id", job_id)
+        .limit(1)
+        .execute()
+    )
+    return response.data[0] if response.data else None
+
+
+def update_evaluation_job(
+    job_id: str,
+    *,
+    status: str,
+    result_json: dict[str, Any] | None = None,
+    error_message: str | None = None,
+    started_at: str | None = None,
+    completed_at: str | None = None,
+) -> dict[str, Any] | None:
+    payload: dict[str, Any] = {"status": status}
+    if result_json is not None:
+        payload["result_json"] = result_json
+    if error_message is not None:
+        payload["error_message"] = error_message
+    if started_at is not None:
+        payload["started_at"] = started_at
+    if completed_at is not None:
+        payload["completed_at"] = completed_at
+    response = (
+        get_client()
+        .table("evaluation_jobs")
+        .update(payload)
+        .eq("job_id", job_id)
+        .execute()
+    )
+    return response.data[0] if response.data else None
+
+
+def save_evaluation_traces(run_id: str, traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not traces:
+        return []
+    rows = []
+    for trace in traces:
+        rows.append(
+            {
+                "trace_id": trace.get("trace_id") or str(uuid4()),
+                "run_id": run_id,
+                "run_type": trace.get("run_type", "catalog_response_evaluation"),
+                "case_id": trace.get("case_id"),
+                "item_id": trace.get("item_id"),
+                "domain_name": trace.get("domain_name"),
+                "user_query": trace.get("user_query", ""),
+                "provider": trace.get("provider", ""),
+                "model": trace.get("model", ""),
+                "prompt": trace.get("prompt", ""),
+                "response": trace.get("response", ""),
+                "status": trace.get("status", "error"),
+                "error_type": trace.get("error_type"),
+                "error_message": trace.get("error"),
+                "latency_ms": trace.get("latency_ms"),
+                "prompt_tokens": trace.get("prompt_tokens"),
+                "completion_tokens": trace.get("completion_tokens"),
+                "estimated_cost_usd": trace.get("estimated_cost_usd"),
+                "policy_id": trace.get("policy_id"),
+                "rubric_id": trace.get("rubric_id"),
+                "rubric_version": trace.get("rubric_version"),
+                "automated_evaluation": trace.get("rubric_evaluation"),
+                "review_status": trace.get("review_status", "unreviewed"),
+            }
+        )
+    return get_client().table("evaluation_traces").insert(rows).execute().data or []
+
+
+def get_evaluation_trace(trace_id: str) -> dict[str, Any] | None:
+    response = (
+        get_client()
+        .table("evaluation_traces")
+        .select("*")
+        .eq("trace_id", trace_id)
+        .limit(1)
+        .execute()
+    )
+    return response.data[0] if response.data else None
+
+
+def list_evaluation_traces(run_id: str | None = None) -> list[dict[str, Any]]:
+    query = (
+        get_client()
+        .table("evaluation_traces")
+        .select("*")
+        .order("created_at", desc=True)
+        .limit(1000)
+    )
+    if run_id:
+        query = query.eq("run_id", run_id)
+    return query.execute().data or []
+
+
+def enqueue_review(trace_id: str, priority: int = 0) -> dict[str, Any]:
+    client = get_client()
+    existing = (
+        client.table("quality_review_queue")
+        .select("*")
+        .eq("trace_id", trace_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if existing:
+        return existing[0]
+
+    trace = get_evaluation_trace(trace_id)
+    if not trace:
+        raise KeyError("Evaluation trace not found.")
+    if trace.get("status") != "success":
+        raise ValueError("Only successful evaluation traces can be queued for human review.")
+
+    review = (
+        client.table("quality_review_queue")
+        .insert(
+            {
+                "review_id": str(uuid4()),
+                "trace_id": trace_id,
+                "status": "queued",
+                "priority": int(priority),
+                "blind_mode": True,
+            }
+        )
+        .execute()
+        .data[0]
+    )
+    client.table("evaluation_traces").update(
+        {"review_status": "queued"}
+    ).eq("trace_id", trace_id).execute()
+    return review
+
+
+def list_review_queue(
+    status: str | None = None,
+    assigned_to: str | None = None,
+) -> list[dict[str, Any]]:
+    query = (
+        get_client()
+        .table("quality_review_queue")
+        .select("*")
+        .order("priority", desc=True)
+        .order("created_at")
+        .limit(500)
+    )
+    if status:
+        query = query.eq("status", status)
+    if assigned_to:
+        query = query.eq("assigned_to", assigned_to)
+
+    queue_rows = query.execute().data or []
+    trace_ids = [row["trace_id"] for row in queue_rows]
+    if not trace_ids:
+        return []
+
+    traces = (
+        get_client()
+        .table("evaluation_traces")
+        .select(
+            "trace_id,item_id,domain_name,user_query,provider,model,status,"
+            "latency_ms,review_status,created_at"
+        )
+        .in_("trace_id", trace_ids)
+        .execute()
+        .data
+        or []
+    )
+    trace_by_id = {row["trace_id"]: row for row in traces}
+    output = []
+    for row in queue_rows:
+        item = {**row, "trace": trace_by_id.get(row["trace_id"], {})}
+        output.append(item)
+    return output
+
+
+def claim_review(review_id: str, reviewer: str) -> dict[str, Any] | None:
+    now = datetime.now(timezone.utc).isoformat()
+    response = (
+        get_client()
+        .table("quality_review_queue")
+        .update(
+            {
+                "status": "in_review",
+                "assigned_to": reviewer,
+                "claimed_at": now,
+            }
+        )
+        .eq("review_id", review_id)
+        .eq("status", "queued")
+        .execute()
+    )
+    if not response.data:
+        return None
+    row = response.data[0]
+    get_client().table("evaluation_traces").update(
+        {"review_status": "in_review"}
+    ).eq("trace_id", row["trace_id"]).execute()
+    return row
+
+
+def get_review_queue_item(
+    review_id: str,
+    include_automated: bool = False,
+) -> dict[str, Any] | None:
+    response = (
+        get_client()
+        .table("quality_review_queue")
+        .select("*")
+        .eq("review_id", review_id)
+        .limit(1)
+        .execute()
+    )
+    if not response.data:
+        return None
+
+    queue = response.data[0]
+    trace = get_evaluation_trace(queue["trace_id"])
+    if not trace:
+        return None
+
+    result = {"review": queue, "trace": trace}
+    if not include_automated:
+        trace = dict(trace)
+        trace.pop("automated_evaluation", None)
+        result["trace"] = trace
+    return result
+
+
 # Auditable annotation operations
 def list_annotation_tasks(category: str | None = None) -> list[dict[str, Any]]:
     query = (
@@ -434,9 +709,21 @@ def list_active_sops() -> list[dict[str, Any]]:
 
 def submit_annotation(payload: dict[str, Any]) -> dict[str, Any]:
     client = get_client()
+    trace_id = payload.get("trace_id")
+
+    if trace_id and not payload.get("automated_evaluation_snapshot"):
+        trace = get_evaluation_trace(trace_id)
+        if trace:
+            payload = {
+                **payload,
+                "automated_evaluation_snapshot": trace.get("automated_evaluation"),
+                "review_source": payload.get("review_source", "evaluation_trace"),
+            }
+
     row = {
         **payload,
         "id": payload.get("id") or str(uuid4()),
+        "task_id": payload.get("task_id"),
     }
     result = (
         client.table("annotation_submissions")
@@ -444,22 +731,47 @@ def submit_annotation(payload: dict[str, Any]) -> dict[str, Any]:
         .execute()
         .data[0]
     )
+
+    details = {
+        "task_id": payload.get("task_id"),
+        "trace_id": trace_id,
+        "sop_id": payload["sop_id"],
+        "review_source": payload.get("review_source", "annotation_task"),
+    }
     client.table("annotation_audit_events").insert(
         {
             "entity_type": "annotation",
             "entity_id": result["id"],
             "action": "submitted",
             "actor": payload["annotator_id"],
-            "details_json": {
-                "task_id": payload["task_id"],
-                "sop_id": payload["sop_id"],
-            },
+            "details_json": details,
         }
     ).execute()
+
+    if trace_id:
+        client.table("evaluation_traces").update(
+            {"review_status": "reviewed"}
+        ).eq("trace_id", trace_id).execute()
+        (
+            client.table("quality_review_queue")
+            .update(
+                {
+                    "status": "completed",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("trace_id", trace_id)
+            .neq("status", "skipped")
+            .execute()
+        )
+
     return result
 
 
-def list_submissions(task_id: str | None = None) -> list[dict[str, Any]]:
+def list_submissions(
+    task_id: str | None = None,
+    trace_id: str | None = None,
+) -> list[dict[str, Any]]:
     query = (
         get_client()
         .table("annotation_submissions")
@@ -469,6 +781,8 @@ def list_submissions(task_id: str | None = None) -> list[dict[str, Any]]:
     )
     if task_id:
         query = query.eq("task_id", task_id)
+    if trace_id:
+        query = query.eq("trace_id", trace_id)
     return query.execute().data or []
 
 
