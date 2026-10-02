@@ -483,7 +483,422 @@ run_options = [x.get("run_id") for x in runs if x.get("run_id")]
 # ─────────────────────────────────────────────────────────────────────────────
 #  Catalog response lab
 # ─────────────────────────────────────────────────────────────────────────────
-if page == "Catalog response lab":
+if page == "Review queue":
+    st.subheader("Blind human review queue")
+    st.caption(
+        "Automated rubric scores stay hidden until the human review is submitted. "
+        "This reduces evaluator anchoring and preserves a clean human-quality signal."
+    )
+
+    status_filter = st.selectbox(
+        "Queue status",
+        ["queued", "in_review", "completed"],
+        key="review_queue_status",
+    )
+    queue = api_get(
+        "/ops/review-queue",
+        params={"status": status_filter},
+    ) or []
+
+    if not queue:
+        st.info("No review items in this state.")
+    else:
+        selected_review = st.selectbox(
+            "Review item",
+            range(len(queue)),
+            format_func=lambda i: (
+                f'{queue[i]["trace"].get("provider")} · '
+                f'{queue[i]["trace"].get("model")} · '
+                f'{queue[i]["trace"].get("item_id")} · '
+                f'{queue[i]["trace"].get("created_at","")[:16]}'
+            ),
+            key="review_queue_item",
+        )
+        review_row = queue[selected_review]
+        review_id = review_row["review_id"]
+        item = api_get(f"/ops/review-queue/{review_id}")
+
+        if item:
+            review = item["review"]
+            trace = item["trace"]
+
+            if review["status"] == "queued":
+                reviewer = st.text_input(
+                    "Reviewer ID",
+                    value="reviewer-01",
+                    key=f"claim_reviewer_{review_id}",
+                )
+                if st.button(
+                    "Claim review",
+                    type="primary",
+                    key=f"claim_{review_id}",
+                ):
+                    try:
+                        api_post(
+                            f"/ops/review-queue/{review_id}/claim",
+                            {"reviewer": reviewer.strip()},
+                            timeout=30,
+                        )
+                        st.rerun()
+                    except requests.RequestException as exc:
+                        st.error(f"Could not claim review: {exc}")
+
+            st.markdown("### Review context")
+            meta = trace.get("product_metadata") or {}
+            policy = trace.get("policy_context") or {}
+            left, right = st.columns([1, 1])
+            with left:
+                st.markdown("#### Product")
+                product_rows = [
+                    {"Field": k.replace("_", " ").title(), "Value": meta.get(k)}
+                    for k in [
+                        "item_id", "domain_name", "item_name", "brand",
+                        "color", "product_type", "style", "material",
+                        "model_number", "country",
+                    ]
+                    if meta.get(k) not in (None, "")
+                ]
+                st.dataframe(
+                    clean_display_df(pd.DataFrame(product_rows)),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            with right:
+                st.markdown("#### Policy context")
+                policy_content = policy.get("content_json") or {}
+                policy_rows = []
+                for rule in policy_content.get("rules", []) if isinstance(policy_content, dict) else []:
+                    if isinstance(rule, dict):
+                        policy_rows.append({
+                            "Rule": rule.get("name", rule.get("id", "rule")),
+                            "Guidance": rule.get("guidance", ""),
+                            "Severity": rule.get("severity", ""),
+                        })
+                if policy_rows:
+                    st.dataframe(
+                        pd.DataFrame(policy_rows),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.caption("No separate policy rules were stored with this trace.")
+
+            st.markdown("#### User question")
+            st.info(trace.get("user_query", ""))
+
+            st.markdown("#### Model response")
+            st.markdown(
+                f"<div class='panel'>{trace.get('response','')}</div>",
+                unsafe_allow_html=True,
+            )
+
+            if review["status"] in {"queued", "in_review"}:
+                sops = api_get("/ops/sops/active") or []
+                if not sops:
+                    st.warning("No active SOP found.")
+                else:
+                    sop = sops[0]
+                    st.caption(
+                        f'Apply SOP: {sop.get("sop_name")} · v{sop.get("version")}'
+                    )
+
+                    with st.form(f"blind_review_form_{review_id}"):
+                        annotator = st.text_input(
+                            "Annotator ID",
+                            value=review.get("assigned_to") or "reviewer-01",
+                        )
+                        relevance = st.selectbox(
+                            "Relevance",
+                            ["pass", "minor_issue", "major_issue", "not_applicable"],
+                        )
+                        correctness = st.selectbox(
+                            "Correctness",
+                            ["pass", "minor_issue", "major_issue", "not_applicable"],
+                        )
+                        completeness = st.selectbox(
+                            "Completeness",
+                            ["pass", "minor_issue", "major_issue", "not_applicable"],
+                        )
+                        overall = st.selectbox(
+                            "Overall decision",
+                            ["accept", "revise", "reject", "escalate"],
+                        )
+                        defect = st.selectbox(
+                            "Primary defect category",
+                            [
+                                "none",
+                                "irrelevant",
+                                "hallucination",
+                                "catalog_mismatch",
+                                "unsupported_claim",
+                                "incorrect_policy",
+                                "privacy_pii",
+                                "unsafe_advice",
+                                "instruction_following",
+                                "missing_next_step",
+                                "wrong_product",
+                                "wrong_marketplace",
+                                "unclear_or_confusing",
+                                "other",
+                            ],
+                        )
+                        evidence = st.text_area(
+                            "Evidence for decision",
+                            placeholder="Quote concrete response evidence and connect it to the supplied product/policy context.",
+                        )
+                        confidence = st.slider("Confidence", 1, 5, 3)
+                        handling = st.number_input(
+                            "Handling time (seconds)",
+                            min_value=0,
+                            max_value=86400,
+                            value=60,
+                            step=5,
+                        )
+                        escalated = st.checkbox(
+                            "Escalate for specialist/policy review"
+                        )
+                        audit = st.checkbox("This is an audit/re-review")
+
+                        submit = st.form_submit_button(
+                            "Submit blind review",
+                            type="primary",
+                        )
+
+                    if submit:
+                        payload = {
+                            "trace_id": trace["trace_id"],
+                            "review_id": review_id,
+                            "annotator_id": annotator.strip(),
+                            "sop_id": sop["sop_id"],
+                            "relevance": relevance,
+                            "correctness": correctness,
+                            "completeness": completeness,
+                            "overall_label": overall,
+                            "evidence": evidence.strip(),
+                            "defect_category": defect,
+                            "confidence": confidence,
+                            "handling_seconds": int(handling),
+                            "escalated": escalated,
+                            "is_audit": audit,
+                        }
+                        if len(payload["evidence"]) < 8:
+                            st.error("Evidence must contain at least 8 characters.")
+                        else:
+                            try:
+                                api_post(
+                                    "/ops/annotations",
+                                    payload,
+                                    timeout=30,
+                                )
+                                st.success("Blind review submitted.")
+                                st.rerun()
+                            except requests.RequestException as exc:
+                                st.error(f"Could not save review: {exc}")
+
+            elif review["status"] == "completed":
+                st.success("Human review is complete. Automated assessment is now revealed.")
+
+                submissions = api_get(
+                    "/ops/annotations",
+                    params={"trace_id": trace["trace_id"]},
+                ) or []
+                latest = submissions[0] if submissions else None
+                automated = trace.get("automated_evaluation") or {}
+
+                compare = pd.DataFrame([
+                    {
+                        "Signal": "Human overall decision",
+                        "Value": latest.get("overall_label") if latest else "—",
+                    },
+                    {
+                        "Signal": "Automated decision",
+                        "Value": automated.get("decision", "—"),
+                    },
+                    {
+                        "Signal": "Automated overall score",
+                        "Value": automated.get("overall_score", "—"),
+                    },
+                    {
+                        "Signal": "Automated critical failure",
+                        "Value": (
+                            "Yes"
+                            if automated.get("critical_failure")
+                            else "No"
+                        ),
+                    },
+                ])
+                st.dataframe(compare, use_container_width=True, hide_index=True)
+
+                if latest:
+                    st.markdown("#### Human evidence")
+                    st.write(latest.get("evidence", ""))
+
+                dims = automated.get("dimensions") or {}
+                if dims:
+                    st.markdown("#### Automated dimension assessment")
+                    st.dataframe(
+                        pd.DataFrame([
+                            {
+                                "Dimension": name,
+                                "Score": value.get("score"),
+                                "Rationale": value.get("rationale", ""),
+                            }
+                            for name, value in dims.items()
+                            if isinstance(value, dict)
+                        ]),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+elif page == "Rubric studio":
+    st.subheader("Rubric studio")
+    st.caption(
+        "Generate a rubric draft from an evaluation objective and supplied policy context. "
+        "Generated rubrics are drafts and require human review before approval or activation."
+    )
+
+    policies = api_get("/ops/policies/active") or []
+    policy_options = ["none"] + [p["policy_id"] for p in policies]
+
+    with st.form("rubric_generate_form"):
+        rubric_name = st.text_input(
+            "Rubric name",
+            value="Product Support Quality",
+        )
+        objective = st.text_area(
+            "Evaluation objective",
+            placeholder=(
+                "Evaluate whether an AI product-support response is safe, relevant, "
+                "correctly grounded in the catalog, complete, policy-compliant, and clear."
+            ),
+            height=140,
+        )
+        selected_policy = st.selectbox(
+            "Policy context",
+            policy_options,
+            format_func=lambda pid: (
+                "No policy context"
+                if pid == "none"
+                else next(
+                    (
+                        f'{p.get("policy_name")} · v{p.get("version")}'
+                        for p in policies
+                        if p.get("policy_id") == pid
+                    ),
+                    pid,
+                )
+            ),
+        )
+        created_by = st.text_input("Created by", value="project-owner")
+        generate = st.form_submit_button(
+            "Generate rubric draft",
+            type="primary",
+        )
+
+    if generate:
+        payload = {
+            "rubric_name": rubric_name.strip(),
+            "objective": objective.strip(),
+            "created_by": created_by.strip(),
+        }
+        if selected_policy != "none":
+            payload["policy_id"] = selected_policy
+
+        try:
+            generated = api_post(
+                "/rubrics/generate",
+                payload,
+                timeout=180,
+            )
+            st.success(
+                f'Draft created · {generated.get("rubric_name")} · '
+                f'v{generated.get("version")}'
+            )
+            st.json(generated.get("rubric_json", {}))
+        except requests.RequestException as exc:
+            st.error(f"Rubric generation failed: {exc}")
+
+    st.markdown("### Rubric versions")
+    rubric_rows = api_get("/rubrics") or []
+    if rubric_rows:
+        selected_id = st.selectbox(
+            "Select rubric version",
+            [r["rubric_id"] for r in rubric_rows],
+            format_func=lambda rid: next(
+                (
+                    f'{r.get("rubric_name")} · v{r.get("version")} · {r.get("status")}'
+                    for r in rubric_rows
+                    if r.get("rubric_id") == rid
+                ),
+                rid,
+            ),
+        )
+        selected = next(r for r in rubric_rows if r["rubric_id"] == selected_id)
+
+        st.markdown(
+            f'**{selected.get("rubric_name")} · v{selected.get("version")} · '
+            f'{selected.get("status")}**'
+        )
+        st.code(
+            json.dumps(selected.get("rubric_json", {}), ensure_ascii=False, indent=2),
+            language="json",
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if selected.get("status") == "draft":
+                reviewer = st.text_input(
+                    "Reviewer",
+                    value="project-reviewer",
+                    key=f"rubric_reviewer_{selected_id}",
+                )
+                review_notes = st.text_area(
+                    "Review notes",
+                    key=f"rubric_notes_{selected_id}",
+                )
+                if st.button(
+                    "Approve draft",
+                    type="primary",
+                    key=f"approve_rubric_{selected_id}",
+                ):
+                    try:
+                        api_post(
+                            f"/rubrics/{selected_id}/approve",
+                            {
+                                "reviewer": reviewer,
+                                "review_notes": review_notes,
+                            },
+                            timeout=30,
+                        )
+                        st.success("Rubric approved.")
+                        st.rerun()
+                    except requests.RequestException as exc:
+                        st.error(f"Approval failed: {exc}")
+        with c2:
+            if selected.get("status") == "approved":
+                reviewer = st.text_input(
+                    "Activator",
+                    value="project-reviewer",
+                    key=f"activate_reviewer_{selected_id}",
+                )
+                if st.button(
+                    "Activate rubric",
+                    type="primary",
+                    key=f"activate_rubric_{selected_id}",
+                ):
+                    try:
+                        api_post(
+                            f"/rubrics/{selected_id}/activate",
+                            {},
+                            timeout=30,
+                        )
+                        st.success("Rubric activated.")
+                        st.rerun()
+                    except requests.RequestException as exc:
+                        st.error(f"Activation failed: {exc}")
+
+elif page == "Catalog response lab":
+
     st.subheader("Catalog-grounded response evaluation")
     st.caption(
         "Search the supplied item-list metadata, ask a product question, run the same grounded prompt across three configured models, "
