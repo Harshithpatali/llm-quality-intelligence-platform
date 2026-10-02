@@ -31,7 +31,14 @@ def run_benchmark(providers, limit=20, categories=None):
                 row["evaluation"]=evaluate(out["response"],case["reference_answer"])
                 row["status"]="success"
             except ProviderError as e:
-                row.update({"response":"","latency_ms":None,"status":"error","error":str(e),"evaluation":None})
+                row.update({
+                    "response": "",
+                    "latency_ms": None,
+                    "status": "error",
+                    "error": str(e),
+                    "error_type": e.error_type,
+                    "evaluation": None,
+                })
             results.append(row)
     db.save_run(run_id,created,"completed",{"providers":providers,"limit":limit,"categories":categories or []},results)
     return {"run_id":run_id,"created_at":created,"status":"completed","cases":len(cases),"models":len(models),"results":results}
