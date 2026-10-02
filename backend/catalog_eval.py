@@ -85,6 +85,17 @@ def validate_rubric(rubric: dict[str, Any]) -> dict[str, Any]:
     rules.setdefault("pass_threshold", 80)
     rules.setdefault("review_threshold", 60)
     rules.setdefault("critical_dimensions", {})
+
+    pass_threshold = float(rules["pass_threshold"])
+    review_threshold = float(rules["review_threshold"])
+    if pass_threshold < review_threshold:
+        raise ValueError("Rubric pass_threshold must be >= review_threshold.")
+    for critical_name in (rules.get("critical_dimensions") or {}):
+        if critical_name not in dimensions:
+            raise ValueError(
+                f"Critical dimension '{critical_name}' is not present in dimensions."
+            )
+
     return rubric
 
 
