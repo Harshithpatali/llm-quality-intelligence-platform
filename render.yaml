@@ -16,11 +16,21 @@ services:
         sync: false
       - key: OPENROUTER_API_KEY
         sync: false
+      - key: API_ACCESS_TOKEN
+        sync: false
       - key: GROQ_MODEL
         value: openai/gpt-oss-120b
+      - key: GROQ_MODELS
+        value: openai/gpt-oss-120b,openai/gpt-oss-20b
       - key: OPENROUTER_MODELS
-        value: openai/gpt-oss-120b,deepseek/deepseek-v4-flash-0731
+        value: deepseek/deepseek-v4-flash-0731
       - key: JUDGE_PROVIDER
         value: groq
       - key: JUDGE_MODEL
-        value: openai/gpt-oss-120b
+        value: qwen/qwen3.8-27b
+      - key: RUBRIC_PROVIDER
+        value: groq
+      - key: RUBRIC_MODEL
+        value: qwen/qwen3.8-27b
+      - key: MODEL_PRICING_USD_PER_MILLION
+        value: '{"groq/openai/gpt-oss-120b":{"input":0.15,"output":0.60},"groq/openai/gpt-oss-20b":{"input":0.075,"output":0.30},"openrouter/deepseek/deepseek-v4-flash-0731":{"input":0.018,"output":0.32},"groq/qwen/qwen3.8-27b":{"input":0.80,"output":4.00}}'
