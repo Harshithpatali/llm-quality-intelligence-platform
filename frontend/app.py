@@ -829,20 +829,20 @@ elif page == "Rubric studio":
                     payload,
                     timeout=180,
                 )
-            st.success(
-                f'Draft created · {generated.get("rubric_name")} · '
-                f'v{generated.get("version")}'
-            )
-            st.code(
-                json.dumps(
-                    generated.get("rubric_json", {}),
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                language="json",
-            )
-        except requests.RequestException as exc:
-            st.error(f"Rubric generation failed: {exc}")
+                st.success(
+                    f'Draft created · {generated.get("rubric_name")} · '
+                    f'v{generated.get("version")}'
+                )
+                st.code(
+                    json.dumps(
+                        generated.get("rubric_json", {}),
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    language="json",
+                )
+            except requests.RequestException as exc:
+                st.error(f"Rubric generation failed: {exc}")
 
     st.markdown("### Rubric versions")
     rubric_rows = api_get("/rubrics") or []
