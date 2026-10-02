@@ -793,20 +793,42 @@ elif page == "Rubric studio":
         )
 
     if generate:
-        payload = {
-            "rubric_name": rubric_name.strip(),
-            "objective": objective.strip(),
-            "created_by": created_by.strip(),
-        }
-        if selected_policy != "none":
-            payload["policy_id"] = selected_policy
+        rubric_name_clean = rubric_name.strip()
+        objective_clean = objective.strip()
+        created_by_clean = created_by.strip()
 
-        try:
-            generated = api_post(
-                "/rubrics/generate",
-                payload,
-                timeout=180,
+        validation_errors = []
+        if len(rubric_name_clean) < 1:
+            validation_errors.append("Rubric name is required.")
+        if len(objective_clean) < 10:
+            validation_errors.append(
+                "Evaluation objective must contain at least 10 characters."
             )
+        if len(objective_clean) > 4000:
+            validation_errors.append(
+                "Evaluation objective must contain 4,000 characters or fewer."
+            )
+        if len(created_by_clean) < 1:
+            validation_errors.append("Created by is required.")
+
+        if validation_errors:
+            for message in validation_errors:
+                st.error(message)
+        else:
+            payload = {
+                "rubric_name": rubric_name_clean,
+                "objective": objective_clean,
+                "created_by": created_by_clean,
+            }
+            if selected_policy != "none":
+                payload["policy_id"] = selected_policy
+
+            try:
+                generated = api_post(
+                    "/rubrics/generate",
+                    payload,
+                    timeout=180,
+                )
             st.success(
                 f'Draft created · {generated.get("rubric_name")} · '
                 f'v{generated.get("version")}'
