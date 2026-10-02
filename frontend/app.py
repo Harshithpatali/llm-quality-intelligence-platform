@@ -814,7 +814,14 @@ elif page == "Rubric studio":
                 f'Draft created · {generated.get("rubric_name")} · '
                 f'v{generated.get("version")}'
             )
-            st.json(generated.get("rubric_json", {}))
+            st.code(
+                json.dumps(
+                    generated.get("rubric_json", {}),
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                language="json",
+            )
         except requests.RequestException as exc:
             st.error(f"Rubric generation failed: {exc}")
 
@@ -1579,6 +1586,49 @@ elif page == "Annotation operations":
         m1, m2 = st.columns(2)
         m1.metric("Major issue rate", f'{metrics.get("major_issue_rate",0)*100:.1f}%' if metrics.get("major_issue_rate") is not None else "—")
         m2.metric("Escalation rate", f'{metrics.get("escalation_rate",0)*100:.1f}%' if metrics.get("escalation_rate") is not None else "—")
+
+        agreement = api_get("/ops/review-agreement") or {}
+        st.markdown("### Calibration and judge-human agreement")
+        a1, a2, a3, a4 = st.columns(4)
+        a1.metric(
+            "Human-human agreement",
+            (
+                f'{agreement.get("pairwise_overall_agreement_pct"):.1f}%'
+                if agreement.get("pairwise_overall_agreement_pct") is not None
+                else "—"
+            ),
+        )
+        a2.metric(
+            "Cohen's kappa",
+            (
+                f'{agreement.get("cohen_kappa_overall"):.2f}'
+                if agreement.get("cohen_kappa_overall") is not None
+                else "—"
+            ),
+        )
+        a3.metric(
+            "Judge-human agreement",
+            (
+                f'{agreement.get("automated_vs_human_agreement_pct"):.1f}%'
+                if agreement.get("automated_vs_human_agreement_pct") is not None
+                else "—"
+            ),
+        )
+        a4.metric(
+            "Multi-annotator traces",
+            agreement.get("traces_with_multiple_annotators", 0),
+        )
+
+        defect_counts = metrics.get("defect_counts") or {}
+        if defect_counts:
+            st.markdown("### Root-cause / defect distribution")
+            defect_df = pd.DataFrame(
+                {
+                    "defect": list(defect_counts),
+                    "count": list(defect_counts.values()),
+                }
+            ).sort_values("count", ascending=False)
+            st.bar_chart(defect_df.set_index("defect"))
 
     sops = api_get("/ops/sops/active") or []
     tasks = api_get("/ops/tasks") or []
