@@ -565,6 +565,8 @@ def enqueue_review(trace_id: str, priority: int = 0) -> dict[str, Any]:
         client.table("quality_review_queue")
         .select("*")
         .eq("trace_id", trace_id)
+        .in_("status", ["queued", "in_review"])
+        .order("created_at", desc=True)
         .limit(1)
         .execute()
         .data
