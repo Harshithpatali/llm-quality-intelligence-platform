@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 import pandas as pd
 import json
@@ -224,7 +225,8 @@ details[data-testid="stExpander"]:hover {
 #  Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def headers():
-    return {}
+    token = st.secrets.get("API_ACCESS_TOKEN", os.getenv("API_ACCESS_TOKEN", "")).strip()
+    return {"X-API-Key": token} if token else {}
 
 def api_get(path, params=None):
     try:
@@ -456,8 +458,8 @@ with st.sidebar:
     st.caption("LLM evaluation · review · analytics")
     page = st.radio(
         "WORKSPACE",
-        ["Annotation operations", "Calibration", "Catalog response lab", "Catalog grounding",
-         "Overview", "Compare evaluations", "Run evaluation", "Human review", "Test cases"],
+        ["Annotation operations", "Review queue", "Rubric studio", "Calibration", "Catalog response lab",
+         "Catalog grounding", "Overview", "Compare evaluations", "Run evaluation", "Human review", "Test cases"],
         label_visibility="visible",
     )
     st.divider()
