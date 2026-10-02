@@ -187,3 +187,54 @@ The evaluator treats the uploaded item-list metadata as product grounding contex
 The rubric is stored as structured JSON when a saved active rubric is selected; otherwise the workflow uses a built-in demonstration rubric. The rubric judge is configured with JUDGE_PROVIDER and JUDGE_MODEL. With the current default generation configuration, selecting both providers produces the configured Groq model plus the two OpenRouter models, while the judge is run separately so the model-generation traces remain comparable.
 
 This design is intentionally different from a generic LLM leaderboard. The product search creates a realistic grounding problem, the three generation traces create comparable model behavior, and the rubric layer turns each trace into auditable quality evidence before a human reviewer makes the final judgment.
+
+## Quality Operations v2
+
+The project now connects catalog grounding, multi-model generation, rubric evaluation, blind human review, and calibration into one quality-operations workflow.
+
+### Flagship workflow
+
+Product keyword → ranked catalog search → product + policy context → three distinct generation models → structured rubric judge → persisted evaluation traces → blind human review queue → human annotation → human/LLM agreement and defect analytics.
+
+### Default model roles
+
+| Role | Provider | Model |
+| --- | --- | --- |
+| Generator 1 | Groq | openai/gpt-oss-120b |
+| Generator 2 | Groq | openai/gpt-oss-20b |
+| Generator 3 | OpenRouter | deepseek/deepseek-v4-flash-0731 |
+| Rubric judge | Groq | qwen/qwen3.8-27b |
+| Rubric generator | Groq | qwen/qwen3.8-27b |
+
+The configuration is environment-driven. The generator set is intentionally three distinct model identities rather than three calls to the same model through different providers.
+
+### New quality layers
+
+**Policy context:** versioned project policy records are supplied separately from catalog facts so the evaluator can distinguish product grounding from policy/instruction compliance. The seeded policy is explicitly a portfolio demonstration policy, not an Amazon policy.
+
+**Rubric Studio:** evaluation rubrics can be generated as drafts from an objective and supplied policy context. Drafts require human review before approval and activation. Decision thresholds and critical dimensions are stored in the rubric JSON rather than only in code.
+
+**Async evaluation jobs:** catalog evaluations return a job ID and execute generation/judging in the background. The frontend polls job state and displays each model response and provider failure independently.
+
+**Blind human review:** successful traces can be queued for review. Human reviewers receive product context, policy context, the user question, and model response while automated rubric scores remain hidden. After submission, the automated evaluation is revealed for comparison.
+
+**Calibration:** the platform calculates human-human agreement, Cohen's kappa for two-annotator traces, per-dimension agreement, and automated-judge vs human agreement.
+
+**Audit sampling:** the QA sampler prioritizes escalations, rejected responses, and major issues before filling the sample deterministically. It is a QA heuristic, not a statistically representative sample.
+
+**Reliability:** provider requests classify failures, retry transient errors and timeouts, preserve token/latency metadata, and can estimate cost from configured pricing snapshots.
+
+**Security:** an optional API_ACCESS_TOKEN can protect application routes, while expensive POST routes have a lightweight rate limit. Provider and Supabase credentials remain server-side.
+
+### Database migration
+
+After the existing schemas, apply:
+
+1. supabase/quality_operations_v2.sql
+2. supabase/quality_operations_v2_patch.sql
+
+The v2 schema adds policy records, evaluation jobs, evaluation traces, a blind review queue, trace-linked annotations, and indexed catalog search. The patch permits repeated reviews of the same trace for inter-annotator calibration.
+
+### Important boundaries
+
+The supplied catalog file is portfolio product metadata, not Amazon internal customer/support data. Automated rubric results are model-generated evaluation signals, not expert-validated ground truth. Human annotation is the final review layer. The API and Render Free deployment remain demo-oriented rather than production-grade multi-tenant infrastructure.
