@@ -159,3 +159,120 @@ values (
   now()
 )
 on conflict (policy_name, version) do nothing;
+
+
+alter table public.evaluation_traces
+  add column if not exists product_metadata jsonb;
+
+alter table public.evaluation_traces
+  add column if not exists policy_context jsonb;
+
+create index if not exists amazon_itemlist_metadata_search_idx
+  on public.amazon_itemlist_metadata
+  using gin (
+    to_tsvector(
+      'simple',
+      concat_ws(
+        ' ',
+        coalesce(item_name, ''),
+        coalesce(brand, ''),
+        coalesce(product_type, ''),
+        coalesce(color, ''),
+        coalesce(style, ''),
+        coalesce(material, ''),
+        coalesce(model_number, ''),
+        coalesce(bullet_points_text, '')
+      )
+    )
+  );
+
+create or replace function public.search_amazon_itemlist(
+  p_query text default null,
+  p_brand text default null,
+  p_product_type text default null,
+  p_domain_name text default null,
+  p_limit integer default 50
+)
+returns table (
+  item_id text,
+  domain_name text,
+  item_name text,
+  brand text,
+  color text,
+  product_type text,
+  style text,
+  material text,
+  model_number text,
+  bullet_points text[],
+  bullet_points_text text,
+  country text,
+  num_bullets integer
+)
+language sql
+stable
+as $$
+  with ranked as (
+    select
+      a.item_id,
+      a.domain_name,
+      a.item_name,
+      a.brand,
+      a.color,
+      a.product_type,
+      a.style,
+      a.material,
+      a.model_number,
+      a.bullet_points,
+      a.bullet_points_text,
+      a.country,
+      a.num_bullets,
+      case
+        when nullif(btrim(p_query), '') is null then 0
+        else ts_rank_cd(
+          to_tsvector(
+            'simple',
+            concat_ws(
+              ' ',
+              coalesce(a.item_name, ''),
+              coalesce(a.brand, ''),
+              coalesce(a.product_type, ''),
+              coalesce(a.color, ''),
+              coalesce(a.style, ''),
+              coalesce(a.material, ''),
+              coalesce(a.model_number, ''),
+              coalesce(a.bullet_points_text, '')
+            )
+          ),
+          plainto_tsquery('simple', p_query)
+        )
+      end as rank
+    from public.amazon_itemlist_metadata a
+    where (nullif(btrim(p_brand), '') is null or a.brand = p_brand)
+      and (nullif(btrim(p_product_type), '') is null or a.product_type = p_product_type)
+      and (nullif(btrim(p_domain_name), '') is null or a.domain_name = p_domain_name)
+      and (
+        nullif(btrim(p_query), '') is null
+        or to_tsvector(
+          'simple',
+          concat_ws(
+            ' ',
+            coalesce(a.item_name, ''),
+            coalesce(a.brand, ''),
+            coalesce(a.product_type, ''),
+            coalesce(a.color, ''),
+            coalesce(a.style, ''),
+            coalesce(a.material, ''),
+            coalesce(a.model_number, ''),
+            coalesce(a.bullet_points_text, '')
+          )
+        ) @@ plainto_tsquery('simple', p_query)
+        or a.item_name ilike '%' || p_query || '%'
+      )
+  )
+  select
+    item_id, domain_name, item_name, brand, color, product_type, style,
+    material, model_number, bullet_points, bullet_points_text, country, num_bullets
+  from ranked
+  order by rank desc, item_name nulls last
+  limit least(greatest(coalesce(p_limit, 50), 1), 100);
+$$;
