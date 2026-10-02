@@ -172,17 +172,14 @@ create index if not exists amazon_itemlist_metadata_search_idx
   using gin (
     to_tsvector(
       'simple',
-      concat_ws(
-        ' ',
-        coalesce(item_name, ''),
-        coalesce(brand, ''),
-        coalesce(product_type, ''),
-        coalesce(color, ''),
-        coalesce(style, ''),
-        coalesce(material, ''),
-        coalesce(model_number, ''),
-        coalesce(bullet_points_text, '')
-      )
+      coalesce(item_name, '') || ' ' ||
+      coalesce(brand, '') || ' ' ||
+      coalesce(product_type, '') || ' ' ||
+      coalesce(color, '') || ' ' ||
+      coalesce(style, '') || ' ' ||
+      coalesce(material, '') || ' ' ||
+      coalesce(model_number, '') || ' ' ||
+      coalesce(bullet_points_text, '')
     )
   );
 
