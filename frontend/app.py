@@ -486,24 +486,39 @@ run_options = [x.get("run_id") for x in runs if x.get("run_id")]
 if page == "Catalog response lab":
     st.subheader("Catalog-grounded response evaluation")
     st.caption(
-        "Search the supplied item-list metadata, ask a product question, run the same grounded prompt across the configured models, "
-        "then score each response with the selected rubric. The catalog file is project-supplied metadata, not Amazon internal support data."
+        "Search the supplied item-list metadata, ask a product question, run the same grounded prompt across three configured models, "
+        "then score each response against the selected rubric. Product metadata is portfolio-supplied catalog data, not Amazon internal support data."
     )
 
     c1, c2, c3 = st.columns([2, 1, 1])
     with c1:
-        q = st.text_input("Search product", placeholder="e.g. wireless, drawer slides, phone case…", key="catalog_eval_q")
+        q = st.text_input(
+            "Search product",
+            placeholder="e.g. wireless, drawer slides, nike shoe…",
+            key="catalog_eval_q",
+        )
     with c2:
-        product_type = st.text_input("Product type", placeholder="optional", key="catalog_eval_type")
+        product_type = st.text_input(
+            "Product type",
+            placeholder="optional",
+            key="catalog_eval_type",
+        )
     with c3:
-        domain_name = st.text_input("Marketplace", placeholder="optional", key="catalog_eval_domain")
+        domain_name = st.text_input(
+            "Marketplace",
+            placeholder="optional",
+            key="catalog_eval_domain",
+        )
 
-    catalog = api_get("/ops/products", params={
-        "q": q.strip() or None,
-        "product_type": product_type.strip() or None,
-        "domain_name": domain_name.strip() or None,
-        "limit": 50,
-    }) or []
+    catalog = api_get(
+        "/ops/products",
+        params={
+            "q": q.strip() or None,
+            "product_type": product_type.strip() or None,
+            "domain_name": domain_name.strip() or None,
+            "limit": 50,
+        },
+    ) or []
 
     if not catalog:
         st.info("No catalog records matched the search.")
@@ -511,7 +526,11 @@ if page == "Catalog response lab":
         selected = st.selectbox(
             "Select product",
             range(len(catalog)),
-            format_func=lambda i: f'{catalog[i]["item_id"]} · {catalog[i].get("item_name") or "Unnamed item"} · {catalog[i].get("domain_name")}',
+            format_func=lambda i: (
+                f'{catalog[i]["item_id"]} · '
+                f'{catalog[i].get("item_name") or "Unnamed item"} · '
+                f'{catalog[i].get("domain_name")}'
+            ),
             key="catalog_eval_product",
         )
         item = catalog[selected]
@@ -523,7 +542,7 @@ if page == "Catalog response lab":
                 {"Field": k.replace("_", " ").title(), "Value": item.get(k)}
                 for k in [
                     "item_id", "domain_name", "item_name", "brand", "color",
-                    "product_type", "style", "material", "model_number", "country"
+                    "product_type", "style", "material", "model_number", "country",
                 ]
                 if item.get(k) not in (None, "")
             ]
@@ -541,6 +560,26 @@ if page == "Catalog response lab":
             else:
                 st.caption("No bullet points supplied.")
 
+        policies = api_get("/ops/policies/active") or []
+        policy_options = ["auto"] + [p["policy_id"] for p in policies]
+        selected_policy = st.selectbox(
+            "Policy context",
+            policy_options,
+            format_func=lambda pid: (
+                "Auto-select active demo policy"
+                if pid == "auto"
+                else next(
+                    (
+                        f'{p.get("policy_name")} · v{p.get("version")}'
+                        for p in policies
+                        if p.get("policy_id") == pid
+                    ),
+                    pid,
+                )
+            ),
+            key="catalog_eval_policy",
+        )
+
         st.markdown("#### User question")
         user_query = st.text_area(
             "Ask a product question that a seller/customer-support assistant should answer",
@@ -549,7 +588,10 @@ if page == "Catalog response lab":
             key="catalog_eval_query",
         )
 
-        rubric_rows = api_get("/rubrics", params={"rubric_name": "Catalog Response Quality"}) or []
+        rubric_rows = api_get(
+            "/rubrics",
+            params={"rubric_name": "Catalog Response Quality"},
+        ) or []
         active_rubrics = [r for r in rubric_rows if r.get("status") == "active"]
         rubric_options = ["built_in_demo"] + [r["rubric_id"] for r in active_rubrics]
         selected_rubric = st.selectbox(
@@ -559,7 +601,11 @@ if page == "Catalog response lab":
                 "Built-in Catalog Response Quality v1"
                 if rid == "built_in_demo"
                 else next(
-                    (f'{r.get("rubric_name")} · v{r.get("version")} · active' for r in active_rubrics if r.get("rubric_id") == rid),
+                    (
+                        f'{r.get("rubric_name")} · v{r.get("version")} · active'
+                        for r in active_rubrics
+                        if r.get("rubric_id") == rid
+                    ),
                     rid,
                 )
             ),
@@ -568,9 +614,12 @@ if page == "Catalog response lab":
 
         st.markdown(
             "<div class='panel'><b>Evaluation flow</b><br>"
-            "1. Retrieve product metadata → 2. Generate the same grounded answer with each configured model → "
-            "3. Judge every response against safety, relevance, correctness/grounding, completeness, policy/instruction following, and clarity → "
-            "4. Persist the trace and rubric result as an evaluation run.</div>",
+            "1. Retrieve ranked product metadata → "
+            "2. Add supplied policy context → "
+            "3. Generate the same grounded answer with three distinct models → "
+            "4. Judge every response with the governed rubric → "
+            "5. Persist traces → "
+            "6. Send selected traces to blind human review.</div>",
             unsafe_allow_html=True,
         )
 
@@ -580,6 +629,7 @@ if page == "Catalog response lab":
             disabled=(not user_query.strip()),
             key="catalog_eval_run",
         )
+
         if run_button:
             payload = {
                 "item_id": item["item_id"],
@@ -589,134 +639,172 @@ if page == "Catalog response lab":
             }
             if selected_rubric != "built_in_demo":
                 payload["rubric_id"] = selected_rubric
+            if selected_policy != "auto":
+                payload["policy_id"] = selected_policy
 
-            with st.spinner("Running the configured generation models and rubric judge…"):
-                try:
-                    data = api_post("/catalog/evaluate", payload, timeout=1800)
-                    st.success(
-                        f'Catalog evaluation completed · {data.get("successful_responses",0)} successful model responses '
-                        f'of {data.get("models_requested",0)} configured model calls.'
+            try:
+                job = api_post("/catalog/evaluate", payload, timeout=60)
+                job_id = job["job_id"]
+                progress = st.empty()
+
+                result = None
+                for attempt in range(90):
+                    time.sleep(2 if attempt < 10 else 3)
+                    status = api_get(f"/evaluation-jobs/{job_id}")
+                    if not status:
+                        break
+
+                    progress.info(
+                        f'Evaluation job {job_id[:8]} · '
+                        f'{str(status.get("status", "unknown")).upper()}'
                     )
 
-                    results = data.get("results", [])
-                    good = [r for r in results if r.get("status") == "success" and isinstance(r.get("rubric_evaluation"), dict)]
+                    if status.get("status") == "completed":
+                        result = status.get("result")
+                        break
 
-                    # ── Scoreboard: tiles + gauges ───────────────────────────
-                    if good:
-                        st.markdown("### Rubric scorecard")
-                        # Overview tiles
-                        tiles = []
-                        overalls = [g["rubric_evaluation"].get("overall_score") for g in good]
-                        critical = sum(1 for g in good if g["rubric_evaluation"].get("critical_failure"))
-                        decisions = [str(g["rubric_evaluation"].get("decision", "—")).upper() for g in good]
-                        avg = sum(o for o in overalls if isinstance(o, (int, float))) / max(1, sum(1 for o in overalls if isinstance(o, (int, float))))
-                        tiles.append(score_tile("Mean overall", f"{avg:.1f}", maxv=100,
-                                                accent="#3978e8", hint=f"{len(good)} responses judged"))
-                        tiles.append(score_tile("Critical failures", critical, maxv=max(1, len(good)),
-                                                accent="#ef4444" if critical else "#10b981",
-                                                hint="Safety / policy blockers"))
-                        accept = sum(1 for d in decisions if d in ("ACCEPT", "PASS", "APPROVE"))
-                        tiles.append(score_tile("Accepted decisions", accept, maxv=max(1, len(good)),
-                                                accent="#10b981", hint=f"{accept}/{len(good)} models"))
-                        
-                        # Fix: join tiles and ensure no newlines exist to prevent markdown code-block rendering
-                        grid_html = "".join(tiles).replace("\n", "")
-                        st.markdown(f"<div class='score-grid'>{grid_html}</div>", unsafe_allow_html=True)
+                    if status.get("status") == "failed":
+                        st.error(
+                            status.get("error_message")
+                            or "Evaluation job failed."
+                        )
+                        break
 
-                        # Per-model gauges
-                        gauge_cols = st.columns(min(len(good), 4))
-                        for i, r in enumerate(good[:4]):
-                            ev = r["rubric_evaluation"]
-                            with gauge_cols[i]:
-                                st.plotly_chart(
-                                    gauge_score(ev.get("overall_score"),
-                                                title=f'{r.get("provider")} · {r.get("model")}'),
-                                    use_container_width=True,
-                                    config={"displayModeBar": False},
-                                )
+                progress.empty()
 
-                        # Dataframe view (kept as before)
-                        rows = []
-                        for r in good:
-                            ev = r["rubric_evaluation"]
-                            row = {
-                                "provider": r.get("provider"),
-                                "model": r.get("model"),
-                                "decision": ev.get("decision"),
-                                "overall_score": ev.get("overall_score"),
-                                "critical_failure": ev.get("critical_failure"),
-                            }
-                            for name, entry in (ev.get("dimensions") or {}).items():
-                                row[name] = entry.get("score") if isinstance(entry, dict) else None
-                            rows.append(row)
-                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                if result:
+                    st.success(
+                        f'Catalog evaluation completed · '
+                        f'{result.get("successful_responses", 0)} successful model responses '
+                        f'of {result.get("models_requested", 0)} configured model calls.'
+                    )
 
-                    st.markdown("### Model responses and evidence")
-                    for idx, r in enumerate(results):
-                        label = f'{r.get("provider")} · {r.get("model")}'
-                        with st.expander(label, expanded=(idx == 0)):
+                    results = result.get("results", [])
+                    good = [r for r in results if r.get("status") == "success"]
+
+                    st.markdown("### Model outputs")
+                    tabs = st.tabs([
+                        f'{r.get("provider")} · {r.get("model")}'
+                        for r in results
+                    ])
+
+                    for tab, r in zip(tabs, results):
+                        with tab:
                             if r.get("status") != "success":
-                                st.error(r.get("error", "Model call failed."))
+                                st.error(r.get("error") or "Model call failed.")
+                                st.caption(
+                                    f'Failure type: {r.get("error_type") or "unknown"}'
+                                )
                                 continue
 
-                            st.markdown("**Model response**")
-                            st.markdown(f"<div class='panel'>{r.get('response','')}</div>", unsafe_allow_html=True)
+                            st.markdown("#### Actual model response")
+                            st.info(r.get("response") or "(empty response)")
+
+                            m1, m2, m3 = st.columns(3)
+                            m1.metric("Latency", f'{r.get("latency_ms", "—")} ms')
+                            m2.metric("Input tokens", r.get("prompt_tokens", "—"))
+                            m3.metric("Output tokens", r.get("completion_tokens", "—"))
 
                             ev = r.get("rubric_evaluation")
                             if not isinstance(ev, dict):
-                                st.warning("Rubric scoring failed for this response.")
+                                st.warning(
+                                    "Response generated successfully, but the rubric judge failed."
+                                )
                                 continue
-                            m1, m2, m3, m4 = st.columns(4)
-                            m1.metric("Overall", f'{ev.get("overall_score","—")}/100')
-                            m2.metric("Decision", str(ev.get("decision", "—")).upper())
-                            m3.metric("Critical failure", "Yes" if ev.get("critical_failure") else "No")
-                            m4.metric("Judge", f'{ev.get("judge_provider","")} / {ev.get("judge_model","")}')
 
-                            st.markdown("**Dimension scores**")
+                            st.markdown("#### Automated rubric assessment")
+                            q1, q2, q3, q4 = st.columns(4)
+                            q1.metric("Overall", f'{ev.get("overall_score", "—")}/100')
+                            q2.metric("Decision", str(ev.get("decision", "—")).upper())
+                            q3.metric(
+                                "Critical failure",
+                                "Yes" if ev.get("critical_failure") else "No",
+                            )
+                            q4.metric(
+                                "Estimated model cost",
+                                (
+                                    f'USD {r.get("estimated_cost_usd"):.6f}'
+                                    if isinstance(r.get("estimated_cost_usd"), (int, float))
+                                    else "Not configured"
+                                ),
+                            )
+
                             dims = ev.get("dimensions") or {}
-
-                            # Bar chart + radar side by side
-                            viz_l, viz_r = st.columns([1.15, 1])
-                            with viz_l:
-                                dbar = dimension_bars(dims)
-                                if dbar is not None:
-                                    st.plotly_chart(dbar, use_container_width=True, config={"displayModeBar": False})
-                            with viz_r:
-                                rdr = radar_dimensions(dims)
-                                if rdr is not None:
-                                    st.plotly_chart(rdr, use_container_width=True, config={"displayModeBar": False})
-
                             dim_df = pd.DataFrame([
                                 {
-                                    "dimension": name,
-                                    "score": entry.get("score"),
-                                    "rationale": entry.get("rationale", ""),
+                                    "Dimension": name,
+                                    "Score": entry.get("score"),
+                                    "Rationale": entry.get("rationale", ""),
                                 }
                                 for name, entry in dims.items()
                                 if isinstance(entry, dict)
                             ])
                             if not dim_df.empty:
-                                st.dataframe(dim_df, use_container_width=True, hide_index=True)
+                                st.dataframe(
+                                    dim_df,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
 
                             evidence = ev.get("evidence") or []
                             unsupported = ev.get("unsupported_claims") or []
                             if evidence:
                                 st.markdown("**Evidence**")
-                                for x in evidence:
-                                    st.write(f"• {x}")
+                                for evidence_item in evidence:
+                                    st.write(f"• {evidence_item}")
                             if unsupported:
                                 st.markdown("**Unsupported claims detected**")
-                                for x in unsupported:
-                                    st.write(f"• {x}")
-                            if ev.get("recommended_action"):
-                                st.info(ev["recommended_action"])
+                                for claim in unsupported:
+                                    st.warning(claim)
+
+                            trace_id = r.get("trace_id")
+                            if trace_id:
+                                if st.button(
+                                    "Send this response to blind human review",
+                                    key=f"queue_trace_{trace_id}",
+                                ):
+                                    try:
+                                        queue_row = api_post(
+                                            "/ops/review-queue",
+                                            {"trace_id": trace_id, "priority": 0},
+                                            timeout=30,
+                                        )
+                                        st.success(
+                                            f'Queued for human review · '
+                                            f'{queue_row.get("review_id", "")[:8]}'
+                                        )
+                                    except requests.RequestException as exc:
+                                        st.error(f"Could not queue review: {exc}")
+
+                    if good:
+                        st.markdown("### Rubric scorecard")
+                        rows = []
+                        for r in results:
+                            ev = r.get("rubric_evaluation")
+                            rows.append({
+                                "Provider": r.get("provider"),
+                                "Model": r.get("model"),
+                                "Generation": r.get("status"),
+                                "Rubric": (
+                                    "judged"
+                                    if isinstance(ev, dict) and ev.get("overall_score") is not None
+                                    else "not judged"
+                                ),
+                                "Overall": ev.get("overall_score") if isinstance(ev, dict) else None,
+                                "Decision": ev.get("decision") if isinstance(ev, dict) else None,
+                            })
+                        st.dataframe(
+                            pd.DataFrame(rows),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
 
                     st.caption(
-                        "Rubric judgments are model-generated evaluation signals. They are not expert-validated ground truth; "
-                        "human annotation remains the final review layer."
+                        "Automated rubric results are evaluation signals, not expert-validated ground truth. "
+                        "Blind human review is the final quality-control layer."
                     )
-                except requests.RequestException as e:
-                    st.error(f"Catalog evaluation failed: {e}")
+            except requests.RequestException as exc:
+                st.error(f"Could not create catalog evaluation job: {exc}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
