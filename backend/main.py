@@ -602,6 +602,7 @@ def submit_operational_annotation(req: OperationalAnnotationRequest):
             raise HTTPException(status_code=409, detail="SOP is not active")
 
         payload = req.model_dump(exclude_none=True)
+        payload.pop("review_id", None)
         payload["review_source"] = "evaluation_trace" if req.trace_id else "annotation_task"
         row = db.submit_annotation(payload)
         return {"status": "submitted", "annotation": row}
