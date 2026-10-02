@@ -23,6 +23,10 @@ _REQUIRED_TABLES = {
     "annotation_sops": "sop_id",
     "annotation_submissions": "id",
     "annotation_audit_events": "id",
+    "quality_policies": "policy_id",
+    "evaluation_jobs": "job_id",
+    "evaluation_traces": "trace_id",
+    "quality_review_queue": "review_id",
 }
 
 _client: Client | None = None
