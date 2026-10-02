@@ -8,6 +8,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from . import db
 from .benchmark import load_dataset, run_benchmark
@@ -423,6 +424,8 @@ def _run_catalog_job(job_id: str, req: CatalogEvaluationRequest):
             row["policy_id"] = policy_id
             row["rubric_id"] = rubric_id
             row["rubric_version"] = rubric_version
+            row["product_metadata"] = product
+            row["policy_context"] = policy
             traces.append(row)
 
         config = {
@@ -700,15 +703,15 @@ def claim_review(review_id: str, req: ReviewClaimRequest):
 
 # --------------------------- SOP governance ---------------------------
 
-class SOPDraftRequest(__import__("pydantic").BaseModel):
-    sop_name: str = __import__("pydantic").Field(min_length=1, max_length=120)
+class SOPDraftRequest(BaseModel):
+    sop_name: str = Field(min_length=1, max_length=120)
     content_json: dict
-    change_summary: str = __import__("pydantic").Field(min_length=1, max_length=2000)
-    created_by: str = __import__("pydantic").Field(min_length=1, max_length=120)
+    change_summary: str = Field(min_length=1, max_length=2000)
+    created_by: str = Field(min_length=1, max_length=120)
 
 
-class SOPReviewRequest(__import__("pydantic").BaseModel):
-    reviewer: str = __import__("pydantic").Field(min_length=1, max_length=120)
+class SOPReviewRequest(BaseModel):
+    reviewer: str = Field(min_length=1, max_length=120)
 
 
 @app.get("/ops/sops", dependencies=[Depends(require_api_key)])
