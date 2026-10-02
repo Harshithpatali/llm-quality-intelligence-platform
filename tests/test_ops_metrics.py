@@ -61,6 +61,7 @@ def test_audit_sample_is_stable_and_excludes_existing_audits():
     assert first == second
     assert {row["id"] for row in first}.issubset({1, 3, 4})
     assert 2 not in {row["id"] for row in first}
+    assert len(first) == 2
 
 
 def test_audit_sample_prioritizes_risk():
