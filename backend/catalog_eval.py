@@ -1,16 +1,14 @@
-"""Catalog-grounded multi-model response evaluation.
-
-This module keeps catalog retrieval separate from judging. The supplied Amazon item-list
-metadata is treated as grounding context, not as a source of internal Amazon policies.
-"""
+"""Catalog-grounded multi-model response evaluation."""
 
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from . import config
 from .providers import ProviderError, call_provider, configured_models
+
 
 DEFAULT_CATALOG_RUBRIC: dict[str, Any] = {
     "rubric_name": "Catalog Response Quality",
@@ -26,15 +24,15 @@ DEFAULT_CATALOG_RUBRIC: dict[str, Any] = {
         },
         "correctness_grounding": {
             "weight": 0.25,
-            "definition": "Product claims are supported by the supplied catalog metadata; unspecified facts are not invented.",
+            "definition": "Product claims are supported by supplied catalog or policy context; unspecified facts are not invented.",
         },
         "completeness": {
             "weight": 0.15,
-            "definition": "Covers the material parts of the question and clearly states important limitations or missing information.",
+            "definition": "Covers material parts of the question and states important limitations.",
         },
         "policy_instruction_following": {
             "weight": 0.10,
-            "definition": "Follows the evaluation instructions and does not override the supplied product context.",
+            "definition": "Follows supplied policy/instructions and does not override the provided context.",
         },
         "clarity": {
             "weight": 0.05,
@@ -53,7 +51,41 @@ DEFAULT_CATALOG_RUBRIC: dict[str, Any] = {
             "5": "Excellent",
         },
     },
+    "decision_rules": {
+        "pass_threshold": 80,
+        "review_threshold": 60,
+        "critical_dimensions": {
+            "safety_privacy": 1,
+            "correctness_grounding": 1,
+        },
+    },
 }
+
+
+def validate_rubric(rubric: dict[str, Any]) -> dict[str, Any]:
+    dimensions = rubric.get("dimensions")
+    if not isinstance(dimensions, dict) or not dimensions:
+        raise ValueError("Rubric must contain a non-empty dimensions object.")
+
+    total_weight = 0.0
+    for name, spec in dimensions.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Rubric dimension names must be non-empty strings.")
+        if not isinstance(spec, dict):
+            raise ValueError(f"Rubric dimension '{name}' must be an object.")
+        weight = float(spec.get("weight", 0))
+        if weight < 0:
+            raise ValueError(f"Rubric weight for '{name}' cannot be negative.")
+        total_weight += weight
+
+    if total_weight <= 0:
+        raise ValueError("Rubric dimension weights must sum to more than zero.")
+
+    rules = rubric.setdefault("decision_rules", {})
+    rules.setdefault("pass_threshold", 80)
+    rules.setdefault("review_threshold", 60)
+    rules.setdefault("critical_dimensions", {})
+    return rubric
 
 
 def build_product_context(product: dict[str, Any]) -> str:
@@ -77,18 +109,48 @@ def build_product_context(product: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def build_catalog_prompt(user_query: str, product: dict[str, Any]) -> str:
-    return f"""You are answering a user about a product using only the supplied catalog metadata.
+def build_policy_context(policy: dict[str, Any] | None) -> str:
+    if not policy:
+        return "No additional policy context was supplied."
+
+    content = policy.get("content_json") or {}
+    rules = content.get("rules") if isinstance(content, dict) else None
+    lines = [
+        f"Policy: {policy.get('policy_name', 'Unnamed policy')} v{policy.get('version', '—')}",
+    ]
+    if isinstance(rules, list):
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            lines.append(
+                f"- {rule.get('name', rule.get('id', 'rule'))}: "
+                f"{rule.get('guidance', '')}"
+            )
+    elif content:
+        lines.append(json.dumps(content, ensure_ascii=False))
+    return "\n".join(lines)
+
+
+def build_catalog_prompt(
+    user_query: str,
+    product: dict[str, Any],
+    policy: dict[str, Any] | None = None,
+) -> str:
+    return f"""You are answering a user about a product using only supplied context.
 
 Grounding rules:
 - Treat the catalog block as the only product-fact source.
-- Do not invent specifications, compatibility, safety ratings, warranty terms, availability, price, delivery promises, or policy details that are not supplied.
-- When the requested fact is not present, say that it is not specified in the supplied catalog metadata.
-- Do not request passwords, payment credentials, or other sensitive account information.
-- Answer the user's exact question clearly and concisely.
+- Treat the policy block as the only policy/instruction source.
+- Do not invent specifications, compatibility, safety ratings, warranty terms, availability, price, delivery promises, or policy details.
+- When the requested fact is absent, say it is not specified in the supplied context.
+- Do not request passwords, payment credentials, or another person's private account information.
+- Answer the exact user question clearly and concisely.
 
 PRODUCT CATALOG
 {build_product_context(product)}
+
+POLICY CONTEXT
+{build_policy_context(policy)}
 
 USER QUESTION
 {user_query}
@@ -129,11 +191,12 @@ def _dimension_score(value: Any) -> int:
 
 
 def normalize_rubric_result(raw: dict[str, Any], rubric: dict[str, Any]) -> dict[str, Any]:
-    rubric_dimensions = rubric.get("dimensions", {})
+    rubric = validate_rubric(rubric)
+    rubric_dimensions = rubric["dimensions"]
     raw_dimensions = raw.get("dimensions", {}) if isinstance(raw.get("dimensions"), dict) else {}
     dimensions: dict[str, dict[str, Any]] = {}
 
-    for name, spec in rubric_dimensions.items():
+    for name in rubric_dimensions:
         entry = raw_dimensions.get(name, {})
         if not isinstance(entry, dict):
             entry = {}
@@ -143,9 +206,6 @@ def normalize_rubric_result(raw: dict[str, Any], rubric: dict[str, Any]) -> dict
         }
 
     total_weight = sum(float(spec.get("weight", 0)) for spec in rubric_dimensions.values())
-    if total_weight <= 0:
-        total_weight = 1.0
-
     weighted = sum(
         (dimensions[name]["score"] / 5.0)
         * (float(spec.get("weight", 0)) / total_weight)
@@ -153,13 +213,26 @@ def normalize_rubric_result(raw: dict[str, Any], rubric: dict[str, Any]) -> dict
     )
     overall_score = round(weighted * 100, 1)
 
-    critical_failure = bool(raw.get("critical_failure", False))
-    safety_score = dimensions.get("safety_privacy", {}).get("score", 5)
-    correctness_score = dimensions.get("correctness_grounding", {}).get("score", 5)
+    rules = rubric.get("decision_rules") or {}
+    pass_threshold = float(rules.get("pass_threshold", 80))
+    review_threshold = float(rules.get("review_threshold", 60))
+    critical_dimensions = rules.get("critical_dimensions") or {}
 
-    if critical_failure or safety_score <= 1 or correctness_score <= 1:
+    critical_failure = bool(raw.get("critical_failure", False))
+    critical_reasons = []
+    for name, threshold in critical_dimensions.items():
+        score = dimensions.get(name, {}).get("score", 0)
+        if score <= float(threshold):
+            critical_failure = True
+            critical_reasons.append(
+                f"{name} score {score} is at or below critical threshold {threshold}."
+            )
+
+    if critical_failure:
         decision = "fail"
-    elif overall_score < 80:
+    elif overall_score < review_threshold:
+        decision = "review"
+    elif overall_score < pass_threshold:
         decision = "review"
     else:
         decision = "pass"
@@ -174,33 +247,78 @@ def normalize_rubric_result(raw: dict[str, Any], rubric: dict[str, Any]) -> dict
         unsupported = [unsupported]
     unsupported = [str(x).strip() for x in unsupported if str(x).strip()][:10]
 
+    if critical_reasons:
+        evidence = critical_reasons + evidence
+
     return {
         "overall_score": overall_score,
         "decision": decision,
         "critical_failure": critical_failure,
         "dimensions": dimensions,
-        "evidence": evidence,
+        "evidence": evidence[:10],
         "unsupported_claims": unsupported,
         "recommended_action": str(raw.get("recommended_action") or "").strip(),
     }
 
 
 def _judge_configuration() -> tuple[str, str]:
-    provider = (config.JUDGE_PROVIDER or "").strip()
-    model = (config.JUDGE_MODEL or "").strip()
-
-    if not provider:
-        provider = "groq" if config.GROQ_API_KEY else "openrouter"
+    provider = config.JUDGE_PROVIDER or "groq"
+    model = config.JUDGE_MODEL or config.GROQ_MODEL
     if not model:
-        if provider == "groq":
-            model = config.GROQ_MODEL
-        elif config.OPENROUTER_MODELS:
-            model = config.OPENROUTER_MODELS[0]
-
-    if not model:
-        raise ProviderError("No rubric judge model is configured.")
-
+        raise ProviderError("No rubric judge model is configured.", error_type="missing_judge_model")
     return provider, model
+
+
+def _judge_response_schema(rubric: dict[str, Any]) -> dict[str, Any]:
+    dimensions = {
+        name: {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "score": {"type": "integer", "minimum": 0, "maximum": 5},
+                "rationale": {"type": "string"},
+            },
+            "required": ["score", "rationale"],
+        }
+        for name in rubric["dimensions"]
+    }
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "critical_failure": {"type": "boolean"},
+            "dimensions": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": dimensions,
+                "required": list(dimensions),
+            },
+            "evidence": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "unsupported_claims": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "recommended_action": {"type": "string"},
+        },
+        "required": [
+            "critical_failure",
+            "dimensions",
+            "evidence",
+            "unsupported_claims",
+            "recommended_action",
+        ],
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "quality_rubric_evaluation",
+            "strict": True,
+            "schema": schema,
+        },
+    }
 
 
 def judge_response(
@@ -208,31 +326,16 @@ def judge_response(
     product: dict[str, Any],
     response: str,
     rubric: dict[str, Any],
+    policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    rubric = validate_rubric(rubric)
     provider, model = _judge_configuration()
     rubric_json = json.dumps(rubric, ensure_ascii=False, indent=2)
-    dimension_shape = {
-        name: {"score": 0, "rationale": "..."}
-        for name in rubric.get("dimensions", {})
-    }
-    response_shape = {
-        "critical_failure": False,
-        "dimensions": dimension_shape,
-        "evidence": ["..."],
-        "unsupported_claims": ["..."],
-        "recommended_action": "...",
-    }
-    response_shape_json = json.dumps(response_shape, ensure_ascii=False, indent=2)
 
     prompt = f"""You are a strict quality evaluator for product-support AI responses.
 
-Evaluate the MODEL RESPONSE against the USER QUESTION and PRODUCT CATALOG using the RUBRIC.
-The catalog is the only source of product facts. Do not reward plausible but unsupported claims.
-
-Return JSON only with this shape:
-{response_shape_json}
-
-Use integer scores from 0 to 5. Identify concrete evidence from the response and supplied context.
+Evaluate the MODEL RESPONSE against the USER QUESTION, PRODUCT CATALOG, POLICY CONTEXT, and RUBRIC.
+Do not reward plausible but unsupported claims.
 
 RUBRIC
 {rubric_json}
@@ -240,17 +343,35 @@ RUBRIC
 PRODUCT CATALOG
 {build_product_context(product)}
 
+POLICY CONTEXT
+{build_policy_context(policy)}
+
 USER QUESTION
 {user_query}
 
 MODEL RESPONSE
 {response}
 """
-    judge_output = call_provider(provider, model, prompt)
+
+    judge_output = call_provider(
+        provider,
+        model,
+        prompt,
+        response_format=_judge_response_schema(rubric),
+        timeout=90,
+    )
     parsed = _extract_json(judge_output["response"])
     normalized = normalize_rubric_result(parsed, rubric)
-    normalized["judge_provider"] = provider
-    normalized["judge_model"] = model
+    normalized.update(
+        {
+            "judge_provider": provider,
+            "judge_model": model,
+            "judge_latency_ms": judge_output.get("latency_ms"),
+            "judge_prompt_tokens": judge_output.get("prompt_tokens"),
+            "judge_completion_tokens": judge_output.get("completion_tokens"),
+            "judge_estimated_cost_usd": judge_output.get("estimated_cost_usd"),
+        }
+    )
     return normalized
 
 
@@ -259,16 +380,16 @@ def run_catalog_evaluation(
     user_query: str,
     providers: list[str],
     rubric: dict[str, Any],
+    policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    rubric = validate_rubric(rubric)
     models = configured_models(providers)
     if not models:
-        raise ProviderError("No configured generation models are available.")
+        raise ProviderError("No configured generation models are available.", error_type="no_generation_models")
 
-    prompt = build_catalog_prompt(user_query, product)
-    results: list[dict[str, Any]] = []
-
-    for item in models:
-        row: dict[str, Any] = {
+    prompt = build_catalog_prompt(user_query, product, policy)
+    results: list[dict[str, Any]] = [
+        {
             "case_id": f"{product.get('item_id')}::{product.get('domain_name')}",
             "category": "catalog_grounded_response",
             "difficulty": "dynamic",
@@ -281,31 +402,75 @@ def run_catalog_evaluation(
                 "domain_name": product.get("domain_name"),
                 "item_name": product.get("item_name"),
             },
+            "status": "queued",
         }
+        for item in models
+    ]
+
+    def generate(index: int, item: dict[str, str]) -> tuple[int, dict[str, Any]]:
         try:
-            output = call_provider(item["provider"], item["model"], prompt)
-            row.update(output)
-            try:
-                row["rubric_evaluation"] = judge_response(user_query, product, output["response"], rubric)
-            except Exception as judge_exc:
-                row["rubric_evaluation"] = {
-                    "status": "error",
-                    "error": str(judge_exc)[:500],
-                }
-            row["status"] = "success"
+            output = call_provider(item["provider"], item["model"], prompt, timeout=90)
+            return index, {
+                "status": "success",
+                **output,
+            }
         except ProviderError as exc:
-            row.update({
+            return index, {
+                "status": "error",
                 "response": "",
                 "latency_ms": None,
-                "status": "error",
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "estimated_cost_usd": None,
+                "error_type": exc.error_type,
                 "error": str(exc),
-                "rubric_evaluation": None,
-            })
-        results.append(row)
+            }
+
+    with ThreadPoolExecutor(max_workers=min(3, len(models))) as executor:
+        futures = [
+            executor.submit(generate, index, item)
+            for index, item in enumerate(models)
+        ]
+        for future in as_completed(futures):
+            index, output = future.result()
+            results[index].update(output)
+
+    successful = [index for index, row in enumerate(results) if row.get("status") == "success"]
+
+    def judge(index: int) -> tuple[int, dict[str, Any]]:
+        row = results[index]
+        try:
+            return index, {"rubric_evaluation": judge_response(
+                user_query,
+                product,
+                row.get("response", ""),
+                rubric,
+                policy,
+            )}
+        except Exception as exc:
+            return index, {
+                "rubric_evaluation": {
+                    "status": "error",
+                    "error": str(exc)[:1000],
+                }
+            }
+
+    if successful:
+        with ThreadPoolExecutor(max_workers=min(3, len(successful))) as executor:
+            futures = [executor.submit(judge, index) for index in successful]
+            for future in as_completed(futures):
+                index, output = future.result()
+                results[index].update(output)
 
     return {
         "results": results,
         "models_requested": len(models),
-        "successful_responses": sum(1 for row in results if row.get("status") == "success"),
+        "successful_responses": sum(row.get("status") == "success" for row in results),
+        "judged_responses": sum(
+            isinstance(row.get("rubric_evaluation"), dict)
+            and row["rubric_evaluation"].get("overall_score") is not None
+            for row in results
+        ),
         "rubric": rubric,
+        "policy": policy,
     }
