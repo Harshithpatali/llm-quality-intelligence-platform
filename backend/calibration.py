@@ -61,7 +61,9 @@ def agreement(pairs: list[tuple[str, str]]) -> dict:
             f1s.append(f1)
             recalls.append(recall)
     return {
-        "n": n,\n        "exact_agreement": round(sum(a == b for a, b in pairs) / n, 4) if n else None,\n        "accuracy": round(sum(a == b for a, b in pairs) / n, 4) if n else None,
+        "n": n,
+        "exact_agreement": round(sum(a == b for a, b in pairs) / n, 4) if n else None,
+        "accuracy": round(sum(a == b for a, b in pairs) / n, 4) if n else None,
         "cohen_kappa": round(_kappa(matrix, n), 4) if n else None,
         "balanced_accuracy": round(sum(recalls) / len(recalls), 4) if recalls else None,
         "macro_f1_observed_classes": round(sum(f1s) / len(f1s), 4) if f1s else None,
