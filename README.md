@@ -258,3 +258,36 @@ python -m backend.judge_validation path/to/human_review_pairs.jsonl --output jud
 ```
 
 Human labels `accept`, `revise`, `reject`, and `escalate` map to `pass`, `review`, `fail`, and `fail` respectively. This is a declared evaluation policy, not a discovered truth. Do not use synthetic or self-generated labels and describe the result as human validation. Report sample size and label distribution alongside metrics, and inspect disagreements before changing thresholds.
+
+
+## Evaluator Calibration and Reliability
+
+The offline calibration module evaluates reviewer consistency and calibrates a numeric rubric-judge score without using holdout labels to select thresholds.
+
+### Input contract
+
+Create a JSONL file with one row per response. `trace_id` must be unique. Keep related variants of the same prompt in one split by supplying a shared `group_id`.
+
+```json
+{"trace_id":"r-001","group_id":"prompt-001","split":"validation","reviewer_a_decision":"pass","reviewer_b_decision":"review","adjudicated_decision":"review","judge_decision":"pass","judge_score":0.74,"dimensions":{"correctness":{"reviewer_a":"pass","reviewer_b":"review","judge":"pass","adjudicated":"review"},"grounding":{"reviewer_a":"fail","reviewer_b":"fail","judge":"fail","adjudicated":"fail"}}}
+{"trace_id":"r-002","group_id":"prompt-002","split":"holdout","reviewer_a_decision":"fail","reviewer_b_decision":"fail","adjudicated_decision":"fail","judge_decision":"review","judge_score":0.31,"dimensions":{"correctness":{"reviewer_a":"fail","reviewer_b":"fail","judge":"review","adjudicated":"fail"}}}
+```
+
+Required top-level fields: `trace_id`, `split`, `reviewer_a_decision`, `reviewer_b_decision`, `adjudicated_decision`, `judge_decision`, and `judge_score`. Decisions are `pass`, `review`, or `fail` (human aliases `accept`, `revise`, `reject`, and `escalate` are accepted). Scores must be consistently normalized to [0, 1]. The adjudicated decision is the operational reference for threshold fitting and judge comparison; preserve original reviewer labels for inter-rater agreement. Dimension-level fields are optional.
+
+### Run
+
+```bash
+python -m backend.calibration path/to/calibration_records.jsonl --output calibration_reliability_report.json
+```
+
+The report includes:
+- Reviewer A vs Reviewer B exact agreement, Cohen's kappa, balanced accuracy, macro-F1, and confusion matrix, separately for validation and holdout.
+- Judge vs adjudicated-reference agreement, including per-class performance and confusion matrices.
+- Human-human and judge-vs-adjudicated disagreement rates by rubric dimension.
+- Two score cutoffs selected on validation data to maximize macro-F1 for fail/review/pass.
+- A frozen-threshold evaluation on the untouched holdout set, with raw judge labels compared against calibrated score decisions.
+
+Threshold search is exhaustive over observed validation scores. Holdout labels are not used in selection. If a threshold is changed after inspecting holdout performance, that holdout is no longer untouched and a new holdout is required. If multiple generations share a prompt or source case, use the same `group_id` so it cannot cross splits.
+
+**Data requirements and interpretation:** use genuinely independent reviewer annotations and a documented adjudication process; do not fabricate or auto-generate human labels. A practical initial target is 200+ labelled responses, with both reviewers independently rating the same subset and all three decision classes represented in each split. More data may be required for stable subgroup/dimension estimates. Cohen's kappa is prevalence-sensitive. Adjudication is an operational reference, not infallible ground truth. The judge score must be the rubric judge's documented numeric score—not the lexical-overlap heuristic. Small samples and class imbalance can make thresholds unstable; always publish split sizes, class support, and uncertainty alongside headline metrics.
