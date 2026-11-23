@@ -52,7 +52,16 @@ def test_requires_unique_ids_and_both_splits():
         analyze_reliability([_row(i, "validation", "pass", .9) for i in range(12)])
 
 
-def test_group_id_cannot_cross_validation_and_holdout():\n    a = _row(1, "validation", "pass", .9)\n    b = _row(2, "holdout", "pass", .9)\n    a["group_id"] = b["group_id"] = "same-prompt"\n    rows = [a] + [_row(i, "validation", "pass", .9) for i in range(3, 14)] + [b]\n    with pytest.raises(ValueError, match="both validation and holdout"):\n        analyze_reliability(rows)\n\n\ndef test_invalid_scores_rejected():
+def test_group_id_cannot_cross_validation_and_holdout():
+    a = _row(1, "validation", "pass", .9)
+    b = _row(2, "holdout", "pass", .9)
+    a["group_id"] = b["group_id"] = "same-prompt"
+    rows = [a] + [_row(i, "validation", "pass", .9) for i in range(3, 14)] + [b]
+    with pytest.raises(ValueError, match="both validation and holdout"):
+        analyze_reliability(rows)
+
+
+def test_invalid_scores_rejected():
     rows = [_row(i, "validation", "pass", .9) for i in range(12)]
     rows += [_row(20, "holdout", "pass", 1.2)]
     with pytest.raises(ValueError, match="judge_score"):
