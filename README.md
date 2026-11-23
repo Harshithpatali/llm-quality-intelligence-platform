@@ -47,7 +47,7 @@ requirements.txt         Python dependencies
 
 `data/benchmark.jsonl` contains 60 synthetic benchmark cases. It is a starter portfolio dataset, not real customer data or an externally validated gold standard.
 
-The current deterministic evaluator reports reference-term overlap and response-length diagnostics. These metrics are not semantic correctness, factuality, relevance, or safety judgments. A fluent or keyword-rich response can still be wrong. Human review is included so benchmark owners can inspect evidence and label failures.
+The deterministic evaluator reports token-level precision, recall, F1, coverage, missing/extra terms, and response-length diagnostics. Its composite remains explicitly labelled a lexical heuristic: it is not semantic correctness, factuality, relevance, or safety. A fluent or keyword-rich response can still be wrong. Use the independent rubric judge for triage and human review for final labels.
 
 ## Local development
 
@@ -129,8 +129,8 @@ All endpoints are public in this demo deployment.
 - Benchmark execution is synchronous; long runs can exceed request timeouts.
 - No public-API rate limit or spend quota is implemented yet.
 - No user identity, reviewer roles, or per-user audit trail.
-- No provider retry/backoff or asynchronous job queue.
-- The heuristic evaluator is not validated against expert labels.
+- Provider requests retry transient failures and honor bounded Retry-After delays; durable queueing is still needed for multi-worker production use.
+- The heuristic evaluator is a lexical diagnostic, not a validated quality metric. Judge calibration requires a human-labelled dataset.
 - Render free services may sleep when idle.
 
 Before treating this as a production service, implement rate limiting and provider budgets, background jobs, robust retry handling, identity/authorization, observability, retention controls, and evaluation calibration against human judgments.
@@ -238,3 +238,23 @@ The v2 schema adds policy records, evaluation jobs, evaluation traces, a blind r
 ### Important boundaries
 
 The supplied catalog file is portfolio product metadata, not Amazon internal customer/support data. Automated rubric results are model-generated evaluation signals, not expert-validated ground truth. Human annotation is the final review layer. The API and Render Free deployment remain demo-oriented rather than production-grade multi-tenant infrastructure.
+
+## Judge validation against human review
+
+An offline validation utility compares rubric-judge decisions with independently collected human labels. It reports a three-class confusion matrix, accuracy, balanced accuracy, per-class precision/recall/F1, macro-F1 over observed classes, Cohen's kappa, category breakdowns, and a deterministic percentile-bootstrap 95% interval for accuracy.
+
+Prepare a JSONL file with one independently reviewed response per line:
+
+```json
+{"judge_decision":"pass","human_decision":"accept","category":"catalog_grounding"}
+{"judge_decision":"review","human_decision":"revise","category":"policy"}
+{"judge_decision":"fail","human_decision":"reject","category":"safety"}
+```
+
+Run the analysis locally:
+
+```bash
+python -m backend.judge_validation path/to/human_review_pairs.jsonl --output judge_validation_report.json
+```
+
+Human labels `accept`, `revise`, `reject`, and `escalate` map to `pass`, `review`, `fail`, and `fail` respectively. This is a declared evaluation policy, not a discovered truth. Do not use synthetic or self-generated labels and describe the result as human validation. Report sample size and label distribution alongside metrics, and inspect disagreements before changing thresholds.
