@@ -151,6 +151,21 @@ def analyze_reliability(records: Iterable[dict]) -> dict:
     if not validation or not holdout:
         raise ValueError("Both validation and untouched holdout rows are required")
 
+    # Keep related prompts/responses in one split to prevent group leakage.
+    group_splits: dict[str, set[str]] = {}
+    for row in rows:
+        group_id = row.get("group_id")
+        if group_id is None or not str(group_id).strip():
+            continue
+        group_splits.setdefault(str(group_id).strip(), set()).add(row["split"])
+    leaked_groups = sorted(group_id for group_id, splits in group_splits.items()
+                           if len(splits) > 1)
+    if leaked_groups:
+        raise ValueError(
+            "group_id values must not appear in both validation and holdout: "
+            + ", ".join(repr(group_id) for group_id in leaked_groups)
+        )
+
     def labels(row: dict) -> tuple[str, str, str, str]:
         required = ("reviewer_a_decision", "reviewer_b_decision",
                     "adjudicated_decision", "judge_decision", "judge_score")
