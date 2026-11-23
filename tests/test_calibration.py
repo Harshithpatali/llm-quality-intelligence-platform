@@ -12,7 +12,7 @@ def _row(i, split, label, score):
         "dimensions": {
             "correctness": {"reviewer_a": label, "reviewer_b": label,
                             "judge": label, "adjudicated": label},
-            "clarity": {"reviewer_a": label, "reviewer_b": "review" if i % 2 else label,
+            "clarity": {"reviewer_a": label, "reviewer_b": ("fail" if label != "fail" else "pass") if i % 2 else label,
                         "judge": label, "adjudicated": label},
         },
     }
